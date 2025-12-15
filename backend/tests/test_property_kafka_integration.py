@@ -128,43 +128,45 @@ class TestKafkaIntegration:
             # Should have called max_retries + 1 times (3 + 1 = 4)
             assert kafka_bus.producer.produce.call_count == 4
 
-    def test_circuit_breaker_activation(self, mock_kafka_deps):
-        """
-        Test that circuit breaker opens after threshold.
-        """
-        MockProducer, _ = mock_kafka_deps
-        kafka_bus = KafkaMessageBus()
-        kafka_bus.enabled = True
-        kafka_bus.producer = MockProducer.return_value
-        
-        # Configure sensitive breaker
-        kafka_bus.circuit_breaker = CircuitBreaker(
-            failure_threshold=2,
-            recovery_timeout=60,
-            expected_exception=(KafkaOperationError,)
-        )
-        
-        kafka_bus.producer.produce.side_effect = Exception("Persistent Error")
-        
-        # 1. Failure 1
-        with pytest.raises(KafkaOperationError):
-            kafka_bus.produce("topic", {})
+        def test_circuit_breaker_activation(self, mock_kafka_deps):
+            """
+            Test that circuit breaker opens after threshold.
+            """
+            MockProducer, _ = mock_kafka_deps
+            # Reset mock call counts
+            MockProducer.return_value.reset_mock()
             
-        # 2. Failure 2 (Threshold reached, state becomes OPEN)
-        with pytest.raises(KafkaOperationError):
-            kafka_bus.produce("topic", {})
+            kafka_bus = KafkaMessageBus()
+            kafka_bus.enabled = True
+            kafka_bus.producer = MockProducer.return_value
             
-        assert kafka_bus.circuit_breaker.state == "OPEN"
-        
-        # 3. Next call should be blocked immediately (SystemRecoveryError wrapped or raised)
-        # Note: CircuitBreaker raises SystemRecoveryError, but produce might wrap it?
-        # produce wraps _do_produce. CircuitBreaker protects _do_produce.
-        # So SystemRecoveryError propagates up.
-        
-        from src.error_handling import SystemRecoveryError
-        
-        # Retry decorator might catch SystemRecoveryError?
-        # No, retry expects (KafkaOperationError,). SystemRecoveryError is ChorusError.
-        
-        with pytest.raises(SystemRecoveryError):
-            kafka_bus.produce("topic", {})
+            # Configure sensitive breaker
+            # Note: threshold=2 means 2 failures => OPEN.
+            kafka_bus.circuit_breaker = CircuitBreaker(
+                failure_threshold=2,
+                recovery_timeout=60,
+                expected_exception=(KafkaOperationError,)
+            )
+            
+            # Force producer to fail
+            kafka_bus.producer.produce.side_effect = Exception("Persistent Error")
+            
+            from src.error_handling import ChorusError
+            
+            # 1. Failure 1
+            # The produce method has internal retries (3 retries).
+            # So a single call will trigger multiple failures internally and trip the breaker.
+            # It will eventually raise KafkaOperationError (if retries exhaust) 
+            # or SystemRecoveryError (if breaker opens during retries and bubbles up).
+            with pytest.raises(ChorusError):
+                kafka_bus.produce("topic", {})
+                
+            # Circuit breaker should now be OPEN
+            assert kafka_bus.circuit_breaker.state == "OPEN"
+            
+            # 2. Next call should be blocked immediately
+            with pytest.raises(ChorusError) as exc_info:
+                kafka_bus.produce("topic", {})
+            
+            # Verify it was blocked by circuit breaker
+            assert "Circuit breaker is OPEN" in str(exc_info.value)
