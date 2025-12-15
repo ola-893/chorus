@@ -1,0 +1,4 @@
+# file: /Users/ola/Documents/hackerthons/chorus/backend/src/logging_config.py
+# hypothesis_version: 6.148.7
+
+['+00:00', 'ERROR', 'INFO', 'WARNING', 'Z', 'action_type', 'adjustment', 'affected_agents', 'agent_id', 'component', 'conflict_prediction', 'confluent_kafka', 'context', 'datadog', 'datadog_api_client', 'datadog_client', 'error_type', 'exception', 'function', 'google.genai', 'level', 'line', 'logger', 'message', 'module', 'old_score', 'operation', 'reason', 'redis', 'request_id', 'risk_score', 'success', 'system_error', 'timestamp', 'traceback', 'trust_score', 'trust_score_update', 'type']

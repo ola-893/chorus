@@ -1,0 +1,14 @@
+setup.py
+src/api/__init__.py
+src/chorus_agent_conflict_predictor.egg-info/PKG-INFO
+src/chorus_agent_conflict_predictor.egg-info/SOURCES.txt
+src/chorus_agent_conflict_predictor.egg-info/dependency_links.txt
+src/chorus_agent_conflict_predictor.egg-info/requires.txt
+src/chorus_agent_conflict_predictor.egg-info/top_level.txt
+src/integrations/__init__.py
+src/prediction_engine/__init__.py
+src/prediction_engine/interfaces.py
+src/prediction_engine/game_theory/__init__.py
+src/prediction_engine/models/__init__.py
+src/prediction_engine/models/core.py
+tests/test_interfaces.py

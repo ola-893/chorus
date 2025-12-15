@@ -1,0 +1,4 @@
+# file: /Users/ola/Documents/hackerthons/chorus/backend/src/prediction_engine/quarantine_manager.py
+# hypothesis_version: 6.148.7
+
+[-100, 100, 'active', 'agent_id', 'manual_release', 'quarantine', 'quarantine_agent', 'quarantine_manager', 'reason', 'release', 'released_at', 'timestamp']

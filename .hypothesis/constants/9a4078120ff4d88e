@@ -1,0 +1,4 @@
+# file: /Users/ola/Documents/hackerthons/chorus/backend/src/prediction_engine/models/core.py
+# hypothesis_version: 6.148.7
+
+['cpu', 'database', 'heartbeat', 'memory', 'network', 'resource_request', 'resource_response', 'status_update', 'storage']

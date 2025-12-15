@@ -1,0 +1,180 @@
+INFO:     Started server process [22650]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+🚀 WebSocket Demo Server Starting...
+📊 Open http://localhost:3003 to see the frontend
+🔌 Frontend will connect to ws://localhost:8000/ws/dashboard
+🛑 Press Ctrl+C to stop
+🎬 Starting WebSocket Demo Server
+⏱️  Duration: 300 seconds
+🌐 Server: http://localhost:8000
+📡 WebSocket: ws://localhost:8000/ws/dashboard
+============================================================
+🤖 Creating 6 agents...
+  ✅ demo_agent_001 (trust: 100)
+  ✅ demo_agent_002 (trust: 69)
+  ✅ demo_agent_003 (trust: 67)
+  ✅ demo_agent_004 (trust: 76)
+  ✅ demo_agent_005 (trust: 92)
+  ✅ demo_agent_006 (trust: 68)
+🎬 Starting agent activity simulation...
+  ⬇️ demo_agent_004: 76 → 65
+  ⬆️ demo_agent_002: 69 → 77
+  ⬇️ demo_agent_006: 68 → 57
+  ⬆️ demo_agent_006: 57 → 60
+INFO:     127.0.0.1:60989 - "GET /health HTTP/1.1" 200 OK
+  ⬆️ demo_agent_004: 65 → 68
+  ⬆️ demo_agent_002: 77 → 78
+  ⬆️ demo_agent_005: 92 → 100
+  ⬇️ demo_agent_001: 100 → 93
+  ⬇️ demo_agent_001: 93 → 84
+  ⬇️ demo_agent_003: 67 → 59
+  ⬇️ demo_agent_006: 60 → 48
+INFO:     127.0.0.1:61003 - "GET /agents HTTP/1.1" 200 OK
+  ⬆️ demo_agent_005: 100 → 100
+  ⬇️ demo_agent_001: 84 → 79
+  ⬇️ demo_agent_004: 68 → 58
+  ⬇️ demo_agent_004: 58 → 49
+  ⬇️ demo_agent_005: 100 → 87
+  ⬇️ demo_agent_006: 48 → 47
+  ⬆️ demo_agent_006: 47 → 55
+INFO:     127.0.0.1:61026 - "GET /agents HTTP/1.1" 200 OK
+ERROR:    Traceback (most recent call last):
+  File "/Users/ola/Documents/hackerthons/chorus/backend/venv/lib/python3.13/site-packages/starlette/routing.py", line 701, in lifespan
+    await receive()
+  File "/Users/ola/Documents/hackerthons/chorus/backend/venv/lib/python3.13/site-packages/uvicorn/lifespan/on.py", line 137, in receive
+    return await self.receive_queue.get()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.13/3.13.3/Frameworks/Python.framework/Versions/3.13/lib/python3.13/asyncio/queues.py", line 186, in get
+    await getter
+asyncio.exceptions.CancelledError
+
+  ⬆️ demo_agent_001: 79 → 86
+  ⬆️ demo_agent_004: 49 → 58
+  ⬆️ demo_agent_005: 87 → 94
+  ⬇️ demo_agent_006: 55 → 51
+  ⬇️ demo_agent_003: 59 → 54
+  ⬆️ demo_agent_006: 51 → 59
+  ⬆️ demo_agent_003: 54 → 58
+  ⬆️ demo_agent_001: 86 → 92
+  ⬆️ demo_agent_004: 58 → 59
+  ⬆️ demo_agent_004: 59 → 65
+  ⬇️ demo_agent_001: 92 → 79
+  ⬆️ demo_agent_004: 65 → 73
+  ⬇️ demo_agent_006: 59 → 47
+  ⬆️ demo_agent_003: 58 → 61
+  ⬆️ demo_agent_006: 47 → 55
+  ⬆️ demo_agent_001: 79 → 83
+  ⬇️ demo_agent_006: 55 → 48
+  ⬆️ demo_agent_003: 61 → 71
+  ⬇️ demo_agent_006: 48 → 36
+  ⬆️ demo_agent_005: 94 → 100
+  ⬆️ demo_agent_004: 73 → 83
+  ⬆️ demo_agent_003: 71 → 79
+  ⬇️ demo_agent_005: 100 → 96
+  ⬇️ demo_agent_002: 78 → 63
+  ⬆️ demo_agent_005: 96 → 97
+  ⬆️ demo_agent_004: 83 → 91
+  ⬇️ demo_agent_005: 97 → 92
+  ⬇️ demo_agent_005: 92 → 79
+🚫 Quarantined demo_agent_006 (trust: 21)
+  ⬇️ demo_agent_006: 36 → 21
+  ⬆️ demo_agent_006: 21 → 29
+  ⬆️ demo_agent_001: 83 → 87
+  ⬇️ demo_agent_006: 29 → 18
+  ⬆️ demo_agent_001: 87 → 97
+  ⬆️ demo_agent_001: 97 → 99
+  ⬇️ demo_agent_002: 63 → 48
+  ⬇️ demo_agent_004: 91 → 88
+  ⬇️ demo_agent_003: 79 → 77
+  ⬆️ demo_agent_004: 88 → 91
+  ⬇️ demo_agent_004: 91 → 83
+  ⬇️ demo_agent_006: 18 → 15
+  ⬆️ demo_agent_001: 99 → 100
+  ⬇️ demo_agent_004: 83 → 77
+  ⬇️ demo_agent_006: 15 → 4
+  ⬆️ demo_agent_005: 79 → 82
+  ⬇️ demo_agent_006: 4 → 2
+  ⬇️ demo_agent_004: 77 → 73
+  ⬇️ demo_agent_003: 77 → 66
+  ⬆️ demo_agent_001: 100 → 100
+  ⬆️ demo_agent_003: 66 → 75
+  ⬇️ demo_agent_003: 75 → 65
+  ⬇️ demo_agent_002: 48 → 47
+  ⬇️ demo_agent_001: 100 → 91
+  ⬇️ demo_agent_005: 82 → 70
+  ⬆️ demo_agent_004: 73 → 78
+  ⬇️ demo_agent_003: 65 → 53
+  ⬇️ demo_agent_001: 91 → 80
+  ⬇️ demo_agent_006: 2 → 0
+  ⬇️ demo_agent_005: 70 → 67
+  ⬇️ demo_agent_002: 47 → 38
+  ⬇️ demo_agent_006: 0 → 0
+  ⬇️ demo_agent_005: 67 → 61
+  ⬆️ demo_agent_004: 78 → 87
+  ⬇️ demo_agent_003: 53 → 40
+  ⬆️ demo_agent_006: 0 → 10
+  ⬆️ demo_agent_001: 80 → 88
+  ⬆️ demo_agent_004: 87 → 91
+  ⬇️ demo_agent_001: 88 → 76
+  ⬇️ demo_agent_006: 10 → 4
+  ⬆️ demo_agent_005: 61 → 67
+  ⬆️ demo_agent_006: 4 → 6
+  ⬇️ demo_agent_004: 91 → 78
+  ⬇️ demo_agent_004: 78 → 70
+  ⬇️ demo_agent_003: 40 → 34
+  ⬇️ demo_agent_004: 70 → 63
+  ⬇️ demo_agent_001: 76 → 64
+  ⬆️ demo_agent_005: 67 → 69
+  ⬆️ demo_agent_001: 64 → 71
+  ⬆️ demo_agent_004: 63 → 70
+  ⬇️ demo_agent_006: 6 → 0
+  ⬇️ demo_agent_006: 0 → 0
+  ⬇️ demo_agent_001: 71 → 65
+  ⬆️ demo_agent_002: 38 → 47
+  ⬆️ demo_agent_006: 0 → 2
+  ⬇️ demo_agent_004: 70 → 68
+  ⬆️ demo_agent_002: 47 → 55
+  ⬇️ demo_agent_004: 68 → 58
+  ⬇️ demo_agent_001: 65 → 57
+  ⬆️ demo_agent_005: 69 → 79
+  ⬇️ demo_agent_002: 55 → 51
+  ⬇️ demo_agent_001: 57 → 53
+  ⬇️ demo_agent_001: 53 → 43
+🚫 Quarantined demo_agent_003 (trust: 19)
+  ⬇️ demo_agent_003: 34 → 19
+  ⬇️ demo_agent_004: 58 → 57
+  ⬆️ demo_agent_002: 51 → 53
+  ⬆️ demo_agent_003: 19 → 27
+  ⬆️ demo_agent_002: 53 → 56
+  ⬇️ demo_agent_004: 57 → 53
+  ⬆️ demo_agent_002: 56 → 60
+  ⬇️ demo_agent_002: 60 → 45
+  ⬆️ demo_agent_004: 53 → 61
+  ⬆️ demo_agent_004: 61 → 71
+  ⬇️ demo_agent_002: 45 → 36
+  ⬇️ demo_agent_002: 36 → 32
+  ⬆️ demo_agent_001: 43 → 44
+  ⬇️ demo_agent_002: 32 → 30
+  ⬆️ demo_agent_001: 44 → 45
+  ⬆️ demo_agent_005: 79 → 82
+🚫 Quarantined demo_agent_002 (trust: 27)
+  ⬇️ demo_agent_002: 30 → 27
+  ⬇️ demo_agent_003: 27 → 15
+  ⬇️ demo_agent_004: 71 → 68
+  ⬇️ demo_agent_002: 27 → 12
+  ⬆️ demo_agent_003: 15 → 21
+  ⬇️ demo_agent_006: 2 → 0
+  ⬇️ demo_agent_001: 45 → 40
+  ⬇️ demo_agent_005: 82 → 76
+  ⬇️ demo_agent_001: 40 → 30
+  ⬆️ demo_agent_003: 21 → 23
+  ⬇️ demo_agent_003: 23 → 12
+  ⬇️ demo_agent_005: 76 → 69
+🚫 Quarantined demo_agent_001 (trust: 22)
+  ⬇️ demo_agent_001: 30 → 22
+  ⬆️ demo_agent_003: 12 → 14
+  ⬆️ demo_agent_005: 69 → 72
+  ⬇️ demo_agent_006: 0 → 0
+  ⬇️ demo_agent_005: 72 → 69

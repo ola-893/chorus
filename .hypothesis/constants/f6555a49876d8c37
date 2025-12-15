@@ -1,0 +1,4 @@
+# file: /Users/ola/Documents/hackerthons/chorus/backend/src/integrations/datadog_client.py
+# hypothesis_version: 6.148.7
+
+['INFO', 'WARN', 'affected_agents', 'agent_id', 'apiKeyAuth', 'appKeyAuth', 'change', 'chorus-backend', 'conflict_id', 'gauge', 'new_score', 'old_score', 'reason', 'risk_score', 'site']

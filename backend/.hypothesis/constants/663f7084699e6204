@@ -1,0 +1,4 @@
+# file: /Users/ola/Documents/hackerthons/chorus/backend/src/integrations/datadog_alerting.py
+# hypothesis_version: 6.148.7
+
+[0.6, 0.7, 1.0, 3.0, 20.0, 30.0, 'INFO', 'active_by_type', 'agent_id', 'alert_id', 'alert_type', 'apiKeyAuth', 'appKeyAuth', 'automatic', 'component', 'component_status', 'condition_cleared', 'conflict_rate', 'conflict_rate_high', 'count', 'critical', 'current_state', 'failed', 'healthy', 'info', 'multiple_quarantines', 'previous_state', 'quarantined_count', 'recovery_details', 'resolution_reason', 'resolution_time', 'resolution_type', 'resolved', 'resolved_at', 'resolved_by_type', 'service:chorus', 'severity', 'severity:high', 'site', 'status', 'system_health', 'threshold', 'total_active', 'total_resolved', 'triggered_at', 'trust_score', 'trust_score_low', 'type', 'unknown', 'warning']

@@ -1,0 +1,4 @@
+# file: /Users/ola/Documents/hackerthons/chorus/backend/src/prediction_engine/analysis_parser.py
+# hypothesis_version: 6.148.7
+
+[0.0, 0.5, 1.0, ',', ':', 'PAYOFFS:\\s*([^\\n]+)', 'Unknown failure mode', 'conflict', 'description', 'empty', 'equilibrium', 'none', 'null', 'status', 'unknown', 'unstable']

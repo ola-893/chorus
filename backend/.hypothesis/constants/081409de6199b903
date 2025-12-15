@@ -1,0 +1,4 @@
+# file: /Users/ola/Documents/hackerthons/chorus/backend/src/prediction_engine/cli_dashboard.py
+# hypothesis_version: 6.148.7
+
+[0.0, 0.5, 0.6, 0.8, 1.0, 2.0, 3.0, 100, '\nShutting down...', '\x1b[2J', '\x1b[?25h', '\x1b[?25l', '\x1b[H', '  Trust Scores:', '%H:%M:%S', '%Y-%m-%d %H:%M:%S', ', ', '-', '...', '=', 'AGENT STATUS:', 'CONFLICT PREDICTION:', 'QUARANTINE', 'SYSTEM STATUS:', 'active_agents', 'quarantine', 'quarantined_agents', 'system_running', 'total_agents', '█', '░', '⚠️', '⚡', '✅', '🔴', '🔴 DISCONNECTED', '🔴 HIGH RISK', '🔴 STOPPED', '🚫', '🟡', '🟡 MODERATE', '🟢', '🟢 CONNECTED', '🟢 LOW RISK', '🟢 RUNNING']

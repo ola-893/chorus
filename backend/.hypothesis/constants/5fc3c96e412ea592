@@ -1,0 +1,4 @@
+# file: /Users/ola/Documents/hackerthons/chorus/backend/src/prediction_engine/gemini_client.py
+# hypothesis_version: 6.148.7
+
+['INFO', 'agent_count', 'api_error', 'api_type', 'connection_error', 'error_type', 'fallback', 'gemini_client', 'gemini_client_init', 'generate_content', 'initialize_client', 'model', 'models', 'newer', 'text']

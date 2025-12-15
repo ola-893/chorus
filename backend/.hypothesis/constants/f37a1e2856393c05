@@ -1,0 +1,4 @@
+# file: /Users/ola/Documents/hackerthons/chorus/backend/src/prediction_engine/intervention_engine.py
+# hypothesis_version: 6.148.7
+
+[1.0, -100, 100, 'ERROR', 'WARN', 'WARNING', 'affected_agents', 'agent_id', 'count', 'execute_quarantine', 'failure_reason', 'get_quarantine_count', 'intervention_engine', 'intervention_id', 'intervention_needed', 'other_actions', 'quarantine', 'quarantine_actions', 'reason', 'threshold', 'total_interventions']

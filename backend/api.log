@@ -1,0 +1,79 @@
+{"timestamp": "2025-12-15T11:22:15.116893Z", "level": "INFO", "logger": "src.system_health", "message": "Registered health check: redis_connection", "module": "logging_config", "function": "log_agent_action", "line": 129, "action_type": "health_check_registered", "context": {"name": "redis_connection", "interval": 30.0, "critical": true}}
+{"timestamp": "2025-12-15T11:22:15.117180Z", "level": "INFO", "logger": "src.system_health", "message": "Registered health check: gemini_api", "module": "logging_config", "function": "log_agent_action", "line": 129, "action_type": "health_check_registered", "context": {"name": "gemini_api", "interval": 60.0, "critical": true}}
+{"timestamp": "2025-12-15T11:22:15.117222Z", "level": "INFO", "logger": "src.system_health", "message": "Registered health check: system_resources", "module": "logging_config", "function": "log_agent_action", "line": 129, "action_type": "health_check_registered", "context": {"name": "system_resources", "interval": 45.0, "critical": false}}
+{"timestamp": "2025-12-15T11:22:15.118421Z", "level": "INFO", "logger": "src.system_lifecycle", "message": "Registered dependency check: configuration", "module": "logging_config", "function": "log_agent_action", "line": 129, "action_type": "dependency_registered", "context": {"name": "configuration", "required": true, "timeout": 10.0}}
+{"timestamp": "2025-12-15T11:22:15.118462Z", "level": "INFO", "logger": "src.system_lifecycle", "message": "Registered dependency check: redis_connection", "module": "logging_config", "function": "log_agent_action", "line": 129, "action_type": "dependency_registered", "context": {"name": "redis_connection", "required": true, "timeout": 15.0}}
+{"timestamp": "2025-12-15T11:22:15.118488Z", "level": "INFO", "logger": "src.system_lifecycle", "message": "Registered dependency check: gemini_api", "module": "logging_config", "function": "log_agent_action", "line": 129, "action_type": "dependency_registered", "context": {"name": "gemini_api", "required": true, "timeout": 30.0}}
+{"timestamp": "2025-12-15T11:22:15.118508Z", "level": "INFO", "logger": "src.system_lifecycle", "message": "Registered dependency check: datadog_connection", "module": "logging_config", "function": "log_agent_action", "line": 129, "action_type": "dependency_registered", "context": {"name": "datadog_connection", "required": false, "timeout": 15.0}}
+{"timestamp": "2025-12-15T11:22:15.161690Z", "level": "INFO", "logger": "src.prediction_engine.redis_client", "message": "Redis client initialized for localhost:6379", "module": "redis_client", "function": "__init__", "line": 86}
+{"timestamp": "2025-12-15T11:22:15.162264Z", "level": "INFO", "logger": "src.prediction_engine.trust_manager", "message": "Trust score manager initialized", "module": "trust_manager", "function": "__init__", "line": 81}
+{"timestamp": "2025-12-15T11:22:15.162301Z", "level": "INFO", "logger": "src.prediction_engine.trust_manager", "message": "Trust manager initialized with quarantine threshold 30", "module": "trust_manager", "function": "__init__", "line": 252}
+{"timestamp": "2025-12-15T11:22:15.171149Z", "level": "INFO", "logger": "src.prediction_engine.quarantine_manager", "message": "Loaded 0 quarantined agents from Redis", "module": "quarantine_manager", "function": "_load_quarantine_state", "line": 74}
+{"timestamp": "2025-12-15T11:22:15.171196Z", "level": "INFO", "logger": "src.prediction_engine.quarantine_manager", "message": "Quarantine manager initialized", "module": "quarantine_manager", "function": "__init__", "line": 48}
+{"timestamp": "2025-12-15T11:22:15.171323Z", "level": "INFO", "logger": "src.prediction_engine.intervention_engine", "message": "Intervention engine initialized with risk threshold 0.7", "module": "intervention_engine", "function": "__init__", "line": 41}
+{"timestamp": "2025-12-15T11:22:15.172870Z", "level": "INFO", "logger": "src.prediction_engine.simulator", "message": "ResourceManager initialized with default resources", "module": "simulator", "function": "__init__", "line": 271}
+{"timestamp": "2025-12-15T11:22:15.172910Z", "level": "INFO", "logger": "src.prediction_engine.simulator", "message": "AgentNetwork initialized for 5-10 agents", "module": "simulator", "function": "__init__", "line": 405}
+{"timestamp": "2025-12-15T11:22:15.172947Z", "level": "INFO", "logger": "src.prediction_engine.system_integration", "message": "Conflict predictor system initialized", "module": "system_integration", "function": "__init__", "line": 45}
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/ola/Documents/hackerthons/chorus/backend/venv/lib/python3.13/site-packages/uvicorn/__main__.py", line 4, in <module>
+    uvicorn.main()
+    ~~~~~~~~~~~~^^
+  File "/Users/ola/Documents/hackerthons/chorus/backend/venv/lib/python3.13/site-packages/click/core.py", line 1485, in __call__
+    return self.main(*args, **kwargs)
+           ~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "/Users/ola/Documents/hackerthons/chorus/backend/venv/lib/python3.13/site-packages/click/core.py", line 1406, in main
+    rv = self.invoke(ctx)
+  File "/Users/ola/Documents/hackerthons/chorus/backend/venv/lib/python3.13/site-packages/click/core.py", line 1269, in invoke
+    return ctx.invoke(self.callback, **ctx.params)
+           ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/ola/Documents/hackerthons/chorus/backend/venv/lib/python3.13/site-packages/click/core.py", line 824, in invoke
+    return callback(*args, **kwargs)
+  File "/Users/ola/Documents/hackerthons/chorus/backend/venv/lib/python3.13/site-packages/uvicorn/main.py", line 423, in main
+    run(
+    ~~~^
+        app,
+        ^^^^
+    ...<46 lines>...
+        h11_max_incomplete_event_size=h11_max_incomplete_event_size,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Users/ola/Documents/hackerthons/chorus/backend/venv/lib/python3.13/site-packages/uvicorn/main.py", line 593, in run
+    server.run()
+    ~~~~~~~~~~^^
+  File "/Users/ola/Documents/hackerthons/chorus/backend/venv/lib/python3.13/site-packages/uvicorn/server.py", line 67, in run
+    return asyncio_run(self.serve(sockets=sockets), loop_factory=self.config.get_loop_factory())
+  File "/opt/homebrew/Cellar/python@3.13/3.13.3/Frameworks/Python.framework/Versions/3.13/lib/python3.13/asyncio/runners.py", line 195, in run
+    return runner.run(main)
+           ~~~~~~~~~~^^^^^^
+  File "/opt/homebrew/Cellar/python@3.13/3.13.3/Frameworks/Python.framework/Versions/3.13/lib/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/homebrew/Cellar/python@3.13/3.13.3/Frameworks/Python.framework/Versions/3.13/lib/python3.13/asyncio/base_events.py", line 719, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/Users/ola/Documents/hackerthons/chorus/backend/venv/lib/python3.13/site-packages/uvicorn/server.py", line 71, in serve
+    await self._serve(sockets)
+  File "/Users/ola/Documents/hackerthons/chorus/backend/venv/lib/python3.13/site-packages/uvicorn/server.py", line 78, in _serve
+    config.load()
+    ~~~~~~~~~~~^^
+  File "/Users/ola/Documents/hackerthons/chorus/backend/venv/lib/python3.13/site-packages/uvicorn/config.py", line 439, in load
+    self.loaded_app = import_from_string(self.app)
+                      ~~~~~~~~~~~~~~~~~~^^^^^^^^^^
+  File "/Users/ola/Documents/hackerthons/chorus/backend/venv/lib/python3.13/site-packages/uvicorn/importer.py", line 19, in import_from_string
+    module = importlib.import_module(module_str)
+  File "/opt/homebrew/Cellar/python@3.13/3.13.3/Frameworks/Python.framework/Versions/3.13/lib/python3.13/importlib/__init__.py", line 88, in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<frozen importlib._bootstrap>", line 1387, in _gcd_import
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1026, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "/Users/ola/Documents/hackerthons/chorus/backend/src/api/main.py", line 47, in <module>
+    async def verify_api_key(api_key: str = Security(api_key_header)):
+                                            ~~~~~~~~^^^^^^^^^^^^^^^^
+TypeError: 'NoneType' object is not callable
