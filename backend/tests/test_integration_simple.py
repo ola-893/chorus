@@ -21,12 +21,11 @@ class TestSimpleIntegration:
     
     def test_agent_network_basic_workflow(self):
         """Test basic agent network creation and operation."""
-        # Create agent network
-        network = AgentNetwork(min_agents=3, max_agents=5)
+        network = AgentNetwork(agent_count=5)
         
         try:
             # Create agents
-            agents = network.create_agents(4)
+            agents = network.create_agents()
             
             # Verify agents created
             assert len(agents) == 4
@@ -73,11 +72,11 @@ class TestSimpleIntegration:
     
     def test_agent_intention_generation(self):
         """Test that agents generate valid intentions."""
-        network = AgentNetwork(min_agents=2, max_agents=2)
+        network = AgentNetwork(agent_count=2)
         
         try:
             # Create and start agents
-            agents = network.create_agents(2)
+            agents = network.create_agents()
             network.start_simulation()
             
             # Let agents run to generate intentions
@@ -90,7 +89,7 @@ class TestSimpleIntegration:
             for intention in intentions:
                 assert isinstance(intention, AgentIntention)
                 assert intention.agent_id in [agent.agent_id for agent in agents]
-                assert intention.resource_type in ["cpu", "memory", "storage", "network"]
+                assert intention.resource_type in ["cpu", "memory", "storage", "network", "database"]
                 assert intention.requested_amount > 0
                 assert 1 <= intention.priority_level <= 10
                 assert isinstance(intention.timestamp, datetime)
@@ -100,11 +99,11 @@ class TestSimpleIntegration:
     
     def test_resource_management_workflow(self):
         """Test resource management and allocation."""
-        network = AgentNetwork(min_agents=2, max_agents=2)
+        network = AgentNetwork(agent_count=2)
         
         try:
             # Create agents
-            agents = network.create_agents(2)
+            agents = network.create_agents()
             
             # Test resource allocation
             request = type('MockRequest', (), {
@@ -165,11 +164,11 @@ class TestSimpleIntegration:
     
     def test_agent_quarantine_workflow_without_redis(self):
         """Test agent quarantine workflow without Redis dependency."""
-        network = AgentNetwork(min_agents=3, max_agents=3)
+        network = AgentNetwork(agent_count=3)
         
         try:
             # Create and start agents
-            agents = network.create_agents(3)
+            agents = network.create_agents()
             network.start_simulation()
             
             # Verify all agents are active initially
@@ -209,11 +208,11 @@ class TestSimpleIntegration:
     
     def test_system_error_resilience(self):
         """Test system resilience to component failures."""
-        network = AgentNetwork(min_agents=2, max_agents=2)
+        network = AgentNetwork(agent_count=2)
         
         try:
             # Create and start agents
-            agents = network.create_agents(2)
+            agents = network.create_agents()
             network.start_simulation()
             
             # Verify normal operation
@@ -242,7 +241,7 @@ class TestSimpleIntegration:
     
     def test_concurrent_agent_operations(self):
         """Test concurrent agent operations."""
-        network = AgentNetwork(min_agents=4, max_agents=4)
+        network = AgentNetwork(agent_count=4)
         
         try:
             # Create agents

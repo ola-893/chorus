@@ -1,4 +1,0 @@
-# file: /Users/ola/Documents/hackerthons/chorus/backend/src/error_handling.py
-# hypothesis_version: 6.148.7
-
-[1.0, 2.0, 10.0, 30.0, 60.0, 'CLOSED', 'ERROR', 'HALF_OPEN', 'INFO', 'OPEN', 'WARNING', 'agent_id', 'agent_simulation', 'attempt', 'circuit_breaker', 'component', 'delay', 'error', 'error_message', 'error_type', 'failure_count', 'fallback_error', 'fallback_execution', 'fallback_failed', 'final_attempt', 'function', 'gemini_api', 'isolated', 'max_retries', 'operation', 'primary_error', 'recovery_attempted', 'redis', 'retry_attempt', 'retry_handler', 'state', 'threshold', 'unexpected_error']

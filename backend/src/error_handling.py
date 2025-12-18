@@ -275,7 +275,7 @@ class CircuitBreaker:
     Circuit breaker pattern implementation for preventing cascade failures.
     """
     
-    def __init__(self, failure_threshold: int = 5, recovery_timeout: float = 60.0, expected_exception: Type[Exception] = Exception, service_name: str = "unknown"):
+    def __init__(self, failure_threshold: int = 5, recovery_timeout: float = 60.0, expected_exception: Type[Exception] = Exception, service_name: str = "unknown", on_state_change: Optional[Callable[[str], None]] = None):
         """
         Initialize circuit breaker.
         
@@ -284,11 +284,13 @@ class CircuitBreaker:
             recovery_timeout: Time to wait before attempting recovery
             expected_exception: Exception type to monitor
             service_name: Name of the service being protected
+            on_state_change: Optional callback function to be called on state change
         """
         self.failure_threshold = failure_threshold
         self.recovery_timeout = recovery_timeout
         self.expected_exception = expected_exception
         self.service_name = service_name
+        self.on_state_change = on_state_change
         
         self.failure_count = 0
         self.last_failure_time = None
@@ -299,7 +301,7 @@ class CircuitBreaker:
         def wrapper(*args, **kwargs):
             if self.state == "OPEN":
                 if self._should_attempt_reset():
-                    self.state = "HALF_OPEN"
+                    self._set_state("HALF_OPEN")
                     agent_logger.log_agent_action(
                         "INFO",
                         f"Circuit breaker attempting recovery for {func.__name__}",
@@ -329,6 +331,14 @@ class CircuitBreaker:
                 raise
         
         return wrapper
+
+    def _set_state(self, new_state: str) -> None:
+        if self.state != new_state:
+            old_state = self.state
+            self.state = new_state
+            self._emit_state_change_event(old_state, new_state)
+            if self.on_state_change:
+                self.on_state_change(new_state)
     
     def _should_attempt_reset(self) -> bool:
         """Check if enough time has passed to attempt recovery."""
@@ -339,17 +349,13 @@ class CircuitBreaker:
     def _on_success(self) -> None:
         """Handle successful operation."""
         if self.state == "HALF_OPEN":
-            old_state = self.state
-            self.state = "CLOSED"
+            self._set_state("CLOSED")
             self.failure_count = 0
             agent_logger.log_agent_action(
                 "INFO",
                 "Circuit breaker recovered successfully",
                 action_type="circuit_breaker_recovered"
             )
-            
-            # Emit circuit breaker state change event
-            self._emit_state_change_event(old_state, "CLOSED")
     
     def _on_failure(self) -> None:
         """Handle failed operation."""
@@ -358,16 +364,13 @@ class CircuitBreaker:
         self.last_failure_time = time.time()
         
         if self.failure_count >= self.failure_threshold:
-            self.state = "OPEN"
+            self._set_state("OPEN")
             agent_logger.log_agent_action(
                 "ERROR",
                 f"Circuit breaker opened due to {self.failure_count} failures",
                 action_type="circuit_breaker_opened",
                 context={"failure_count": self.failure_count, "threshold": self.failure_threshold}
             )
-            
-            # Emit circuit breaker state change event
-            self._emit_state_change_event(old_state, "OPEN")
     
     def _emit_state_change_event(self, old_state: str, new_state: str) -> None:
         """

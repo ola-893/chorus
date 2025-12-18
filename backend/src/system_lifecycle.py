@@ -18,6 +18,9 @@ from .logging_config import get_agent_logger
 from .system_health import health_monitor, SystemHealthMonitor
 from .error_handling import system_recovery_context
 from .event_bus import event_bus
+from .stream_processor import stream_processor
+from .event_bridge import kafka_event_bridge
+from .integrations.kafka_client import kafka_bus
 
 agent_logger = get_agent_logger(__name__)
 
@@ -310,6 +313,67 @@ class SystemLifecycleManager:
             # Initialize health monitoring
             self._initialize_health_monitoring()
             
+            # Create Kafka topics
+            if self.settings.kafka.enabled:
+                try:
+                    topics = [
+                        self.settings.kafka.agent_messages_topic,
+                        self.settings.kafka.agent_decisions_topic,
+                        self.settings.kafka.system_alerts_topic,
+                        self.settings.kafka.causal_graph_updates_topic,
+                        self.settings.kafka.analytics_metrics_topic
+                    ]
+                    kafka_bus.create_topics(topics)
+                    agent_logger.log_agent_action("INFO", "Kafka topics creation initiated", action_type="kafka_topics_init")
+                except Exception as e:
+                    agent_logger.log_system_error(e, "lifecycle_manager", "create_topics")
+
+            # Start Stream Processor
+            try:
+                stream_processor.start()
+                agent_logger.log_agent_action("INFO", "Stream Processor started", action_type="stream_processor_init")
+                
+                # Register shutdown callback for Stream Processor
+                self.register_shutdown_callback(stream_processor.stop)
+            except Exception as e:
+                agent_logger.log_system_error(e, "lifecycle_manager", "start_stream_processor")
+
+            # Start Kafka Event Bridge
+            try:
+                kafka_event_bridge.start()
+                agent_logger.log_agent_action("INFO", "Kafka Event Bridge started", action_type="event_bridge_init")
+                
+                # Register shutdown callback for Event Bridge
+                self.register_shutdown_callback(kafka_event_bridge.stop)
+            except Exception as e:
+                agent_logger.log_system_error(e, "lifecycle_manager", "start_event_bridge")
+
+            # Start performance monitoring
+            try:
+                from .performance_optimizer import performance_monitor, connection_pool_manager
+                performance_monitor.start_monitoring()
+                agent_logger.log_agent_action("INFO", "Performance monitoring started", action_type="performance_monitor_init")
+                
+                # Register shutdown callback for performance monitor
+                self.register_shutdown_callback(performance_monitor.stop_monitoring)
+            except ImportError:
+                agent_logger.log_agent_action("WARNING", "Performance monitoring not available", action_type="performance_monitor_unavailable")
+            except Exception as e:
+                agent_logger.log_system_error(e, "lifecycle_manager", "start_performance_monitor")
+
+            # Start stream monitoring
+            try:
+                from .stream_monitoring import stream_monitor
+                stream_monitor.start_monitoring()
+                agent_logger.log_agent_action("INFO", "Stream monitoring started", action_type="stream_monitor_init")
+                
+                # Register shutdown callback for stream monitor
+                self.register_shutdown_callback(stream_monitor.stop_monitoring)
+            except ImportError:
+                agent_logger.log_agent_action("WARNING", "Stream monitoring not available", action_type="stream_monitor_unavailable")
+            except Exception as e:
+                agent_logger.log_system_error(e, "lifecycle_manager", "start_stream_monitor")
+
             # Start health publisher
             self._start_health_publisher()
             

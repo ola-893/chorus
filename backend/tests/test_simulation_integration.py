@@ -9,7 +9,7 @@ from src.prediction_engine.simulator import AgentNetwork
 def test_full_simulation_integration():
     """Test the complete agent simulation workflow."""
     # Create and start a simulation
-    network = AgentNetwork(min_agents=3, max_agents=5)
+    network = AgentNetwork(agent_count=5)
     
     # Start simulation (should create agents automatically)
     network.start_simulation()
@@ -62,8 +62,8 @@ def test_full_simulation_integration():
 
 def test_resource_contention_scenario():
     """Test a scenario that creates resource contention."""
-    network = AgentNetwork(min_agents=3, max_agents=3)
-    agents = network.create_agents(3)
+    network = AgentNetwork(agent_count=3)
+    agents = network.create_agents()
     
     # Use up most resources to force contention
     for resource_type in ["cpu", "memory", "storage"]:

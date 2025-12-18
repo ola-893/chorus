@@ -25,7 +25,11 @@ class TestCausalGraph:
         Adding an interaction should update the graph and publish an event.
         """
         with patch('src.mapper.topology_manager.nx') as mock_nx, \
-             patch('src.mapper.topology_manager.kafka_bus') as mock_bus:
+             patch('src.mapper.topology_manager.kafka_bus') as mock_bus, \
+             patch('src.mapper.topology_manager.settings') as mock_settings:
+            
+            # Setup mock settings with Kafka topic configuration
+            mock_settings.kafka.causal_graph_updates_topic = "test-causal-graph-updates"
             
             # Setup mock graph
             mock_graph = MagicMock()
@@ -43,7 +47,7 @@ class TestCausalGraph:
             # Assert Kafka Publish
             assert mock_bus.produce.called
             args, _ = mock_bus.produce.call_args
-            assert args[0] == manager.update_topic
+            assert args[0] == "test-causal-graph-updates"
             assert args[1]['event_type'] == "edge_added"
             assert args[1]['data']['source'] == source
 
@@ -87,7 +91,11 @@ class TestCausalGraph:
         Node status updates should be tracked and published.
         """
         with patch('src.mapper.topology_manager.kafka_bus') as mock_bus, \
-             patch('src.mapper.topology_manager.nx'):
+             patch('src.mapper.topology_manager.nx'), \
+             patch('src.mapper.topology_manager.settings') as mock_settings:
+            
+            # Setup mock settings with Kafka topic configuration
+            mock_settings.kafka.causal_graph_updates_topic = "test-causal-graph-updates"
             
             manager = GraphTopologyManager()
             

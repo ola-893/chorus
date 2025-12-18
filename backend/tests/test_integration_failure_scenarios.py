@@ -14,6 +14,7 @@ from src.prediction_engine.models.core import (
 from src.prediction_engine.intervention_engine import intervention_engine
 from src.prediction_engine.quarantine_manager import quarantine_manager
 from src.prediction_engine.trust_manager import trust_manager
+from src.integrations.kafka_client import KafkaOperationError
 
 
 @pytest.mark.integration
@@ -35,11 +36,11 @@ class TestFailureScenarios:
     def test_cdn_cache_stampede_detection_and_prevention(self):
         """Test detection and prevention of CDN cache stampede scenarios."""
         # Create network with agents that will cause cache stampede
-        network = AgentNetwork(min_agents=8, max_agents=8)
+        network = AgentNetwork(agent_count=8)
         
         try:
             # Create agents
-            agents = network.create_agents(8)
+            agents = network.create_agents()
             
             # Simulate cache stampede: multiple agents requesting same cached content
             cache_key = "popular_content_cache"
@@ -108,11 +109,11 @@ class TestFailureScenarios:
     
     def test_cascading_failure_prevention(self):
         """Test prevention of cascading failures across agent network."""
-        network = AgentNetwork(min_agents=10, max_agents=10)
+        network = AgentNetwork(agent_count=10)
         
         try:
             # Create larger network for cascading failure testing
-            agents = network.create_agents(10)
+            agents = network.create_agents()
             network.start_simulation()
             
             # Simulate initial failure trigger: resource exhaustion
@@ -172,11 +173,11 @@ class TestFailureScenarios:
     
     def test_deadlock_detection_and_resolution(self):
         """Test detection and resolution of agent deadlock scenarios."""
-        network = AgentNetwork(min_agents=4, max_agents=4)
+        network = AgentNetwork(agent_count=4)
         
         try:
             # Create agents for deadlock scenario
-            agents = network.create_agents(4)
+            agents = network.create_agents()
             
             # Simulate circular dependency deadlock
             # Agent A wants resource 1, holds resource 2
@@ -266,10 +267,10 @@ class TestFailureScenarios:
     
     def test_resource_starvation_scenario(self):
         """Test detection and handling of resource starvation scenarios."""
-        network = AgentNetwork(min_agents=6, max_agents=6)
+        network = AgentNetwork(agent_count=6)
         
         try:
-            agents = network.create_agents(6)
+            agents = network.create_agents()
             
             # Create scenario where high-priority agents starve low-priority ones
             high_priority_agents = agents[:2]
@@ -348,14 +349,19 @@ class TestFailureScenarios:
         REASONING: Multiple agents simultaneously requesting resources after idle period
         """
         
+        # Mock both newer and older API patterns
+        mock_client = Mock()
+        mock_client.generate_content.return_value = mock_response
+        mock_genai.Client.return_value = mock_client
+        
         mock_model = Mock()
         mock_model.generate_content.return_value = mock_response
         mock_genai.GenerativeModel.return_value = mock_model
         
-        network = AgentNetwork(min_agents=6, max_agents=6)
+        network = AgentNetwork(agent_count=6)
         
         try:
-            agents = network.create_agents(6)
+            agents = network.create_agents()
             
             # Simulate thundering herd: all agents wake up at same time
             wake_time = datetime.now()
@@ -408,10 +414,10 @@ class TestFailureScenarios:
     
     def test_priority_inversion_scenario(self):
         """Test priority inversion scenario and resolution."""
-        network = AgentNetwork(min_agents=3, max_agents=3)
+        network = AgentNetwork(agent_count=3)
         
         try:
-            agents = network.create_agents(3)
+            agents = network.create_agents()
             
             # Create priority inversion scenario:
             # High priority agent blocked by low priority agent holding resource
@@ -424,7 +430,7 @@ class TestFailureScenarios:
             # Low priority agent holds resource that high priority needs
             low_priority_intention = AgentIntention(
                 agent_id=low_priority_agent.agent_id,
-                resource_type="shared_resource",
+                resource_type="database",
                 requested_amount=100,
                 priority_level=2,
                 timestamp=datetime.now()
@@ -433,7 +439,7 @@ class TestFailureScenarios:
             # High priority agent wants same resource
             high_priority_intention = AgentIntention(
                 agent_id=high_priority_agent.agent_id,
-                resource_type="shared_resource", 
+                resource_type="database", 
                 requested_amount=100,
                 priority_level=9,
                 timestamp=datetime.now() + timedelta(milliseconds=100)
@@ -453,11 +459,11 @@ class TestFailureScenarios:
             high_priority_agent._current_intentions = [high_priority_intention]
             medium_priority_agent._current_intentions = [medium_priority_intention]
             
-            # Pre-allocate shared resource to low priority agent
+            # Pre-allocate database resource to low priority agent
             request = network.resource_manager.process_request(
                 type('MockRequest', (), {
                     'agent_id': low_priority_agent.agent_id,
-                    'resource_type': 'shared_resource',
+                    'resource_type': 'database',
                     'amount': 100,
                     'priority': 2,
                     'timestamp': datetime.now()
@@ -498,6 +504,107 @@ class TestFailureScenarios:
             network.stop_simulation()
 
 
+
+
+
+    def test_graceful_degradation_with_kafka_unavailable(self):
+
+
+        """Test that the system degrades gracefully when Kafka is unavailable."""
+
+
+        with patch('src.integrations.kafka_client.KafkaMessageBus') as MockKafkaBus:
+
+
+            mock_kafka_instance = MockKafkaBus.return_value
+
+
+            mock_kafka_instance.produce.side_effect = KafkaOperationError("Kafka is down")
+
+
+            mock_kafka_instance.message_buffer = []
+
+
+
+
+
+            system = ConflictPredictorSystem()
+
+
+            self.system = system
+
+
+            
+
+
+            try:
+
+
+                system.start_system(agent_count=2)
+
+
+                time.sleep(1.0)
+
+
+
+
+
+                system.simulate_conflict_scenario()
+
+
+
+
+
+                # Verify that produce was called and that the message was buffered
+
+
+                assert mock_kafka_instance.produce.called
+
+
+                assert len(mock_kafka_instance.message_buffer) > 0
+
+
+
+
+
+                # Restore the connection
+
+
+                mock_kafka_instance.produce.side_effect = None
+
+
+                mock_kafka_instance._is_connected = True
+
+
+                mock_kafka_instance._replay_buffer()
+
+
+
+
+
+                # Verify that the buffer is now empty
+
+
+                assert len(mock_kafka_instance.message_buffer) == 0
+
+
+
+
+
+            finally:
+
+
+                system.stop_system()
+
+
+
+
+
 if __name__ == "__main__":
+
+
     # Run failure scenario tests
+
+
     pytest.main([__file__, "-v", "-m", "integration"])
+

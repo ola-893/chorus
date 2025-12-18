@@ -1,4 +1,0 @@
-# file: /Users/ola/Documents/hackerthons/chorus/backend/src/prediction_engine/trust_manager.py
-# hypothesis_version: 6.148.7
-
-[0.0, 0.5, 100, 'INFO', 'WARNING', 'adjustment', 'get_all_trust_scores', 'new_score', 'old_score', 'quarantine', 'reason', 'threshold', 'timestamp', 'trend', 'trust_manager', 'trust_score', 'trust_score_init', 'volatility']

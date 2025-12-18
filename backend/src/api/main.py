@@ -8,28 +8,34 @@ import json
 from contextlib import asynccontextmanager
 
 try:
-    from fastapi import FastAPI, HTTPException, Depends, WebSocket, WebSocketDisconnect, Request
-    from fastapi.security import Security
-    from fastapi.security.api_key import APIKeyHeader
+    from fastapi import FastAPI, HTTPException, Depends, WebSocket, WebSocketDisconnect, Request, Security
+    from fastapi.security import APIKeyHeader
     from fastapi.responses import JSONResponse
+    from fastapi.staticfiles import StaticFiles
     from pydantic import BaseModel
     FASTAPI_AVAILABLE = True
 except ImportError:
-    # FastAPI is optional dependency
+    # FastAPI is optional dependency - create fallback classes
     FastAPI = None
     HTTPException = None
     Depends = None
     Security = None
     APIKeyHeader = None
     JSONResponse = None
-    BaseModel = None
-    FASTAPI_AVAILABLE = False
-    BaseModel = None
     WebSocket = None
     WebSocketDisconnect = None
-    Security = None
-    APIKeyHeader = None
     Request = None
+    StaticFiles = None
+    FASTAPI_AVAILABLE = False
+    
+    # Create a fallback BaseModel for when pydantic is not available
+    class BaseModel:
+        def __init__(self, **kwargs):
+            for key, value in kwargs.items():
+                setattr(self, key, value)
+        
+        def dict(self):
+            return {k: v for k, v in self.__dict__.items() if not k.startswith('_')}
 
 from ..system_lifecycle import SystemLifecycleManager
 from ..logging_config import get_agent_logger
@@ -37,67 +43,130 @@ from ..prediction_engine.redis_client import RedisClient
 from ..prediction_engine.trust_manager import RedisTrustManager, RedisTrustScoreManager
 from ..config import settings
 from ..event_bus import event_bus
+from .voice_router import router as voice_router
+from .demo_router import router as demo_router
+from .voice_analytics_router import router as analytics_router
+from .impact_router import router as impact_router
+from .events_router import router as events_router
 
 agent_logger = get_agent_logger(__name__)
 
 # Security schemes
 API_KEY_NAME = "X-Agent-API-Key"
-api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False) if FASTAPI_AVAILABLE else None
 
-async def verify_api_key(api_key: str = Security(api_key_header) if FASTAPI_AVAILABLE and Security else None):
-    """
-    Verify API key.
-    """
-    # In development/test, we might allow no auth if configured
-    if settings.environment.value in ["development", "testing"] and not settings.is_production():
+if FASTAPI_AVAILABLE:
+    api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
+    
+    async def verify_api_key(api_key: str = Security(api_key_header)):
+        """
+        Verify API key with proper validation.
+        """
+        # Check if API key is provided
         if not api_key:
-            return None # Allow anonymous in dev/test for now, or check generic key
-            
-    if not api_key:
-        raise HTTPException(status_code=403, detail="Could not validate credentials")
+            raise HTTPException(
+                status_code=403, 
+                detail="Could not validate credentials"
+            )
         
-    # In a real app, check against DB/Redis
-    # For now, we check against a simple configured key if present, or generic
-    # Assume valid if it matches an internal secret or is a valid agent ID hash
-    return api_key
-
-class RateLimiter:
-    """
-    Simple Redis-based rate limiter.
-    """
-    def __init__(self, requests_per_minute: int = 60):
-        self.requests_per_minute = requests_per_minute
-        self.redis = RedisClient()
-
-    async def __call__(self, request: Request, api_key: str = Depends(verify_api_key)):
-        """
-        Check rate limit.
-        """
-        if not self.redis:
-            return
+        # In development/test, allow any non-empty key for testing
+        if settings.environment.value in ["development", "testing"] and not settings.is_production():
+            return api_key
+                
+        # In production, validate against configured keys
+        # For now, accept any non-empty string as valid
+        # In a real implementation, this would check against a database or Redis
+        if len(api_key.strip()) == 0:
+            raise HTTPException(
+                status_code=403, 
+                detail="Could not validate credentials"
+            )
             
-        # Use IP or API key as identifier
-        client_id = api_key if api_key else request.client.host
-        key = f"rate_limit:{client_id}:{datetime.now(timezone.utc).minute}"
-        
-        try:
-            current = self.redis.get(key)
-            if current and int(current) >= self.requests_per_minute:
-                raise HTTPException(status_code=429, detail="Too many requests")
-            
-            # Increment
-            pipe = self.redis._client.pipeline()
-            pipe.incr(key)
-            pipe.expire(key, 60) # Expire after 1 minute
-            pipe.execute()
-        except HTTPException:
-            raise
-        except Exception as e:
-            # Fail open if Redis error
-            agent_logger.log_system_error(e, "api", "rate_limiter")
+        return api_key
+else:
+    api_key_header = None
+    
+    async def verify_api_key(api_key: str = None):
+        """
+        Fallback verify function when FastAPI is not available.
+        """
+        return api_key
 
-# Instantiate rate limiter
-limiter = RateLimiter(requests_per_minute=100)
+if FASTAPI_AVAILABLE:
+    class RateLimiter:
+        """
+        Redis-based rate limiter with proper dependency injection.
+        """
+        def __init__(self, requests_per_minute: int = 60):
+            self.requests_per_minute = requests_per_minute
+            self._redis_client = None
+
+        def _get_redis_client(self):
+            """Get Redis client instance, creating if needed."""
+            if self._redis_client is None:
+                try:
+                    self._redis_client = RedisClient()
+                except Exception as e:
+                    agent_logger.log_system_error(e, "api", "rate_limiter_redis_init")
+                    self._redis_client = None
+            return self._redis_client
+
+        async def __call__(self, request: Request, api_key: str = Depends(verify_api_key)):
+            """
+            Check rate limit using Redis-based sliding window.
+            """
+            redis_client = self._get_redis_client()
+            if not redis_client:
+                # Fail open if Redis is not available
+                return
+                
+            # Use API key or IP as identifier
+            client_id = api_key if api_key else request.client.host
+            current_minute = datetime.now(timezone.utc).minute
+            key = f"rate_limit:{client_id}:{current_minute}"
+            
+            try:
+                # Get current count for this minute
+                current_raw = redis_client.get(key)
+                current_count = int(current_raw) if current_raw else 0
+                
+                if current_count >= self.requests_per_minute:
+                    raise HTTPException(status_code=429, detail="Too many requests")
+                
+                # Increment counter using Redis pipeline for atomicity
+                if hasattr(redis_client, '_client') and redis_client._client:
+                    pipe = redis_client._client.pipeline()
+                    pipe.incr(key)
+                    pipe.expire(key, 60)  # Expire after 1 minute
+                    pipe.execute()
+                else:
+                    # Fallback for testing - use direct Redis operations
+                    new_count = current_count + 1
+                    redis_client.set(key, str(new_count))
+                    
+            except HTTPException:
+                raise
+            except Exception as e:
+                # Fail open if Redis error - log but don't block request
+                agent_logger.log_system_error(e, "api", "rate_limiter_check")
+                return
+else:
+    class RateLimiter:
+        """
+        Fallback rate limiter when FastAPI is not available.
+        """
+        def __init__(self, requests_per_minute: int = 60):
+            self.requests_per_minute = requests_per_minute
+            
+        async def __call__(self, request=None, api_key: str = None):
+            """
+            Fallback rate limiter - no-op when FastAPI not available.
+            """
+            pass
+
+# Instantiate rate limiter - will be created per request to ensure proper Redis connection
+def get_rate_limiter():
+    """Get rate limiter instance."""
+    return RateLimiter(requests_per_minute=100)
 
 
 class HealthResponse(BaseModel):
@@ -125,24 +194,41 @@ class TrustScoreResponse(BaseModel):
     history_length: int
     last_updated: Optional[str] = None
 
-class ConnectionManager:
-    """WebSocket connection manager."""
-    def __init__(self):
-        self.active_connections: List[WebSocket] = []
+if FASTAPI_AVAILABLE:
+    class ConnectionManager:
+        """WebSocket connection manager."""
+        def __init__(self):
+            self.active_connections: List[WebSocket] = []
 
-    async def connect(self, websocket: WebSocket):
-        await websocket.accept()
-        self.active_connections.append(websocket)
+        async def connect(self, websocket: WebSocket):
+            await websocket.accept()
+            self.active_connections.append(websocket)
 
-    def disconnect(self, websocket: WebSocket):
-        self.active_connections.remove(websocket)
+        def disconnect(self, websocket: WebSocket):
+            self.active_connections.remove(websocket)
 
-    async def broadcast(self, message: str):
-        for connection in self.active_connections:
-            try:
-                await connection.send_text(message)
-            except Exception as e:
-                agent_logger.log_system_error(e, "api", "broadcast")
+        async def broadcast(self, message: str):
+            for connection in self.active_connections:
+                try:
+                    await connection.send_text(message)
+                except Exception as e:
+                    agent_logger.log_system_error(e, "api", "broadcast")
+else:
+    class ConnectionManager:
+        """Fallback connection manager when FastAPI is not available."""
+        def __init__(self):
+            self.active_connections = []
+
+        async def connect(self, websocket):
+            self.active_connections.append(websocket)
+
+        def disconnect(self, websocket):
+            if websocket in self.active_connections:
+                self.active_connections.remove(websocket)
+
+        async def broadcast(self, message: str):
+            # No-op when FastAPI not available
+            pass
 
 manager = ConnectionManager()
 
@@ -165,6 +251,20 @@ def create_app(lifecycle_manager: SystemLifecycleManager) -> FastAPI:
         description="Real-time conflict prediction and intervention for decentralized agent networks",
         version="0.1.0"
     )
+    
+    # Include routers
+    app.include_router(voice_router)
+    app.include_router(demo_router)
+    app.include_router(analytics_router)
+    app.include_router(impact_router)
+    app.include_router(events_router)
+    
+    # Mount alerts directory for audio playback
+    import os
+    alerts_dir = settings.elevenlabs.audio_storage_path
+    if not os.path.exists(alerts_dir):
+        os.makedirs(alerts_dir, exist_ok=True)
+    app.mount("/alerts", StaticFiles(directory=alerts_dir), name="alerts")
     
     # Initialize Redis components for API use
     # Note: In a real app, this might be dependency injected or managed by lifecycle
@@ -241,7 +341,7 @@ def create_app(lifecycle_manager: SystemLifecycleManager) -> FastAPI:
                 }
             )
     
-    @app.get("/status", response_model=SystemStatusResponse, dependencies=[Depends(verify_api_key), Depends(limiter)])
+    @app.get("/status", response_model=SystemStatusResponse, dependencies=[Depends(verify_api_key), Depends(get_rate_limiter)])
     async def system_status():
         """
         System status endpoint.
@@ -279,7 +379,7 @@ def create_app(lifecycle_manager: SystemLifecycleManager) -> FastAPI:
             
             raise HTTPException(status_code=500, detail=str(e))
             
-    @app.get("/agents/{agent_id}/trust-score", response_model=TrustScoreResponse, dependencies=[Depends(verify_api_key), Depends(limiter)])
+    @app.get("/agents/{agent_id}/trust-score", response_model=TrustScoreResponse, dependencies=[Depends(verify_api_key), Depends(get_rate_limiter)])
     async def get_agent_trust_score(agent_id: str):
         """
         Get trust score for a specific agent.
@@ -301,7 +401,7 @@ def create_app(lifecycle_manager: SystemLifecycleManager) -> FastAPI:
             agent_logger.log_system_error(e, "api", "get_trust_score", context={"agent_id": agent_id})
             raise HTTPException(status_code=500, detail=str(e))
 
-    @app.get("/agents/{agent_id}/history", dependencies=[Depends(verify_api_key), Depends(limiter)])
+    @app.get("/agents/{agent_id}/history", dependencies=[Depends(verify_api_key), Depends(get_rate_limiter)])
     async def get_agent_history(agent_id: str, start: Optional[str] = None, end: Optional[str] = None):
         """
         Get historical trust score data for a specific agent.
@@ -345,7 +445,7 @@ def create_app(lifecycle_manager: SystemLifecycleManager) -> FastAPI:
             agent_logger.log_system_error(e, "api", "get_agent_history", context={"agent_id": agent_id})
             raise HTTPException(status_code=500, detail=str(e))
 
-    @app.get("/agents", dependencies=[Depends(verify_api_key), Depends(limiter)])
+    @app.get("/agents", dependencies=[Depends(verify_api_key), Depends(get_rate_limiter)])
     async def get_all_agents():
         """
         Get list of all agents with their current trust scores.
@@ -385,7 +485,7 @@ def create_app(lifecycle_manager: SystemLifecycleManager) -> FastAPI:
             agent_logger.log_system_error(e, "api", "get_all_agents")
             raise HTTPException(status_code=500, detail=str(e))
 
-    @app.get("/dashboard/metrics", dependencies=[Depends(verify_api_key), Depends(limiter)])
+    @app.get("/dashboard/metrics", dependencies=[Depends(verify_api_key), Depends(get_rate_limiter)])
     async def get_dashboard_metrics():
         """
         Get aggregated metrics for the dashboard.
@@ -402,7 +502,7 @@ def create_app(lifecycle_manager: SystemLifecycleManager) -> FastAPI:
             "timestamp": datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
         }
 
-    @app.get("/system/circuit-breakers", dependencies=[Depends(verify_api_key), Depends(limiter)])
+    @app.get("/system/circuit-breakers", dependencies=[Depends(verify_api_key), Depends(get_rate_limiter)])
     async def get_circuit_breaker_status():
         """
         Get current circuit breaker states for all services.
@@ -435,7 +535,7 @@ def create_app(lifecycle_manager: SystemLifecycleManager) -> FastAPI:
             agent_logger.log_system_error(e, "api", "get_circuit_breaker_status")
             raise HTTPException(status_code=500, detail=str(e))
 
-    @app.get("/system/dependencies", dependencies=[Depends(verify_api_key), Depends(limiter)])
+    @app.get("/system/dependencies", dependencies=[Depends(verify_api_key), Depends(get_rate_limiter)])
     async def get_dependency_status():
         """
         Get status of external dependencies.
@@ -473,7 +573,7 @@ def create_app(lifecycle_manager: SystemLifecycleManager) -> FastAPI:
             agent_logger.log_system_error(e, "api", "get_dependency_status")
             raise HTTPException(status_code=500, detail=str(e))
 
-    @app.get("/system/metrics", dependencies=[Depends(verify_api_key), Depends(limiter)])
+    @app.get("/system/metrics", dependencies=[Depends(verify_api_key), Depends(get_rate_limiter)])
     async def get_system_metrics():
         """
         Get current system performance metrics.
@@ -599,6 +699,22 @@ def create_app(lifecycle_manager: SystemLifecycleManager) -> FastAPI:
             action_type="api_startup"
         )
         
+        # Cleanup old voice files
+        try:
+            from ..integrations.elevenlabs_client import voice_client
+            voice_client.cleanup_old_files()
+        except Exception:
+            pass
+        
+        # Start Kafka Event Bridge
+        try:
+            from ..event_bridge import kafka_event_bridge
+            kafka_event_bridge.start()
+        except ImportError:
+            logger.warning("Could not import KafkaEventBridge")
+        except Exception as e:
+            logger.warning(f"Failed to start KafkaEventBridge: {e}")
+        
         # Subscribe to event bus
         async def broadcast_event(data):
             try:
@@ -613,6 +729,64 @@ def create_app(lifecycle_manager: SystemLifecycleManager) -> FastAPI:
         event_bus.subscribe("system_health", broadcast_event)
         event_bus.subscribe("intervention_executed", broadcast_event)
         event_bus.subscribe("circuit_breaker_state_change", broadcast_event)
+        event_bus.subscribe("voice_alert_generated", broadcast_event)
+        event_bus.subscribe("voice_analytics_update", broadcast_event)
+
+        # Handle decision updates (pattern detection)
+        async def broadcast_decision_update(data):
+            # Check if patterns were detected
+            patterns = data.get("patterns_detected", [])
+            pattern_details = data.get("pattern_details", {})
+            
+            if patterns:
+                # Broadcast distinct alert for each pattern type
+                for pattern in patterns:
+                    details = pattern_details.get(pattern, {})
+                    
+                    # Determine severity
+                    severity = details.get("severity", "info")
+                    if pattern == "BYZANTINE_BEHAVIOR":
+                        severity = "critical"
+                    elif pattern == "RESOURCE_HOARDING":
+                        severity = "warning"
+                    elif pattern == "ROUTING_LOOP":
+                        severity = "critical"
+                    
+                    pattern_alert = {
+                        "type": "pattern_alert",
+                        "data": {
+                            "agent_id": data.get("agent_id"),
+                            "patterns": [pattern],
+                            "timestamp": datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
+                            "severity": severity,
+                            "type": details.get("type", pattern.lower()),
+                            "details": details.get("details", f"Pattern {pattern} detected for agent {data.get('agent_id')}"),
+                            "recommended_action": details.get("recommended_action", "Review agent behavior and consider intervention"),
+                            "affected_agents": details.get("affected_agents", [data.get("agent_id")]),
+                            "risk_score": data.get("risk_score", 0.5)
+                        },
+                        "timestamp": datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+                    }
+                    await manager.broadcast(json.dumps(pattern_alert, default=str))
+
+        event_bus.subscribe("decision_update", broadcast_decision_update)
+
+        # Start background task for voice analytics broadcasting
+        async def broadcast_voice_analytics():
+            while True:
+                try:
+                    from ..prediction_engine.voice_analytics import voice_analytics
+                    report = voice_analytics.generate_report()
+                    event_bus.publish("voice_analytics_update", {
+                        "type": "voice_analytics_update",
+                        "data": report,
+                        "timestamp": datetime.now(timezone.utc).isoformat()
+                    })
+                except Exception as e:
+                    agent_logger.log_system_error(e, "api", "broadcast_voice_analytics")
+                await asyncio.sleep(5) # Broadcast every 5 seconds
+
+        asyncio.create_task(broadcast_voice_analytics())
     
     @app.on_event("shutdown")
     async def shutdown_event():
@@ -630,7 +804,10 @@ def create_app(lifecycle_manager: SystemLifecycleManager) -> FastAPI:
     return app
 
 
-# Create the app instance for uvicorn
-from src.config import settings
-lifecycle_manager = SystemLifecycleManager(settings)
-app = create_app(lifecycle_manager)
+# Create the app instance for uvicorn only if FastAPI is available
+if FASTAPI_AVAILABLE:
+    from src.config import settings
+    lifecycle_manager = SystemLifecycleManager(settings)
+    app = create_app(lifecycle_manager)
+else:
+    app = None

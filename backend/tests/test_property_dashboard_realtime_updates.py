@@ -7,7 +7,7 @@ Property-based tests for dashboard real-time updates.
 import pytest
 import asyncio
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 from hypothesis import given, strategies as st, settings
 from hypothesis.strategies import composite
@@ -61,7 +61,7 @@ def system_health_data(draw):
             "uptime": uptime,
             "is_healthy": overall_status == "healthy",
             "component_statuses": component_statuses,
-            "timestamp": datetime.utcnow().isoformat() + "Z"
+            "timestamp": datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
         }
     }
 
@@ -78,7 +78,7 @@ def quarantine_event_data(draw):
         "agent_id": agent_id,
         "action": action,
         "reason": reason,
-        "timestamp": datetime.utcnow().isoformat() + "Z"
+        "timestamp": datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
     }
 
 

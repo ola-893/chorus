@@ -38,12 +38,7 @@ dev = [
     "mypy>=1.6.0",
 ]
 
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-python_files = ["test_*.py"]
-python_classes = ["Test*"]
-python_functions = ["test_*"]
-addopts = "-v --tb=short"
+# Pytest configuration is in pytest.ini to avoid conflicts
 
 [tool.black]
 line-length = 88

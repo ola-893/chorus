@@ -1,4 +1,0 @@
-# file: /Users/ola/Documents/hackerthons/chorus/backend/src/prediction_engine/game_theory/prompt_builder.py
-# hypothesis_version: 6.148.7
-
-['avg_priority', 'priorities', 'resources', 'total_demand']

@@ -1,4 +1,0 @@
-# file: /Users/ola/Documents/hackerthons/chorus/backend/src/prediction_engine/redis_client.py
-# hypothesis_version: 6.148.7
-
-[0.1, 2.0, 5.0, 'created_connections', 'db', 'error_type', 'execute_with_retry', 'host', 'in_use_connections', 'max_retries', 'non_recoverable', 'operation', 'pool_size', 'port', 'redis_client', 'utf-8']

@@ -1,4 +1,0 @@
-# file: /Users/ola/Documents/hackerthons/chorus/backend/src/config.py
-# hypothesis_version: 6.148.7
-
-[0.7, 6379, '.env', 'DATADOG_API_KEY', 'DATADOG_APP_KEY', 'ELEVENLABS_API_KEY', 'GEMINI_API_KEY', 'GEMINI_MODEL', 'INFO', 'LOG_FORMAT', 'LOG_LEVEL', 'MAX_AGENTS', 'MIN_AGENTS', 'PLAINTEXT', 'REDIS_DB', 'REDIS_HOST', 'REDIS_PASSWORD', 'REDIS_PORT', 'gemini-3-pro-preview', 'localhost', 'localhost:9092', 'utf-8']

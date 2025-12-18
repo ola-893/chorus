@@ -2,9 +2,8 @@
 Basic integration test for Gemini API components.
 """
 import pytest
+from unittest.mock import Mock, patch, PropertyMock
 from datetime import datetime
-from unittest.mock import Mock, patch
-
 from src.prediction_engine.gemini_client import GeminiClient
 from src.prediction_engine.models.core import AgentIntention, GameState
 
@@ -13,19 +12,25 @@ class TestGeminiIntegration:
     """Integration tests for Gemini API components."""
     
     @patch('src.prediction_engine.gemini_client.genai')
-    def test_full_conflict_analysis_workflow(self, mock_genai):
+    @patch('src.prediction_engine.gemini_client.RedisClient')
+    def test_full_conflict_analysis_workflow(self, mock_redis_cls, mock_genai):
         """Test complete workflow from intentions to conflict analysis."""
+        # Mock Redis
+        mock_redis = Mock()
+        mock_redis.get.return_value = None
+        mock_redis_cls.return_value = mock_redis
+        
         # Mock Gemini API response
         mock_response = Mock()
-        mock_response.text = """
+        type(mock_response).text = PropertyMock(return_value="""
         RISK_SCORE: 0.8
         CONFIDENCE: 0.9
         AFFECTED_AGENTS: agent_1, agent_2
         FAILURE_MODE: CPU resource deadlock
         NASH_EQUILIBRIUM: Competitive equilibrium with high contention
         REASONING: Both agents requesting high-priority CPU access creates deadlock risk
-        """
-        
+        """)
+    
         # Mock the newer API approach
         mock_client = Mock()
         mock_client.generate_content.return_value = mock_response

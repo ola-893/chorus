@@ -9,6 +9,8 @@ from .interfaces import InterventionEngine as InterventionEngineInterface, Trust
 from .models.core import ConflictAnalysis, QuarantineResult, InterventionAction
 from .trust_manager import trust_manager
 from .quarantine_manager import quarantine_manager
+from .alert_classification import severity_classifier
+from .alert_delivery_engine import alert_delivery_engine
 from ..config import settings
 from ..logging_config import get_agent_logger
 from ..integrations.datadog_client import datadog_client
@@ -317,6 +319,10 @@ class ConflictInterventionEngine(InterventionEngineInterface):
                 return None
             
             most_aggressive = self.identify_most_aggressive_agent(conflict_analysis.affected_agents)
+            
+            # Classify and deliver alert
+            alert = severity_classifier.classify_conflict(conflict_analysis)
+            alert_delivery_engine.process_alert(alert)
             
             # Execute quarantine
             reason = f"High conflict risk ({conflict_analysis.risk_score:.3f}): {conflict_analysis.predicted_failure_mode}"

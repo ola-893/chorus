@@ -100,37 +100,82 @@ kubectl get pods -n chorus-agent-predictor
 
 ### Minimal Configuration (.env)
 ```bash
+# Basic required settings
 CHORUS_ENVIRONMENT=development
+CHORUS_DEBUG=true
 CHORUS_GEMINI_API_KEY=your_gemini_api_key_here
+CHORUS_GEMINI_MODEL=gemini-3-pro-preview
 CHORUS_REDIS_HOST=localhost
 CHORUS_REDIS_PORT=6379
+CHORUS_LOG_LEVEL=DEBUG
 ```
 
 ### Production Configuration (.env)
 ```bash
+# Production environment settings
 CHORUS_ENVIRONMENT=production
 CHORUS_DEBUG=false
+
+# Google Gemini API
 CHORUS_GEMINI_API_KEY=your_production_gemini_key
+CHORUS_GEMINI_MODEL=gemini-3-pro-preview
+CHORUS_GEMINI_TIMEOUT=30.0
+CHORUS_GEMINI_MAX_RETRIES=3
+
+# Redis Configuration
 CHORUS_REDIS_HOST=your_redis_host
+CHORUS_REDIS_PORT=6379
 CHORUS_REDIS_PASSWORD=your_secure_redis_password
+CHORUS_REDIS_DB=0
+CHORUS_REDIS_POOL_SIZE=20
+
+# API Configuration
+CHORUS_API_HOST=0.0.0.0
+CHORUS_API_PORT=8000
+CHORUS_API_WORKERS=4
+
+# Observability
 CHORUS_DATADOG_ENABLED=true
 CHORUS_DATADOG_API_KEY=your_datadog_api_key
 CHORUS_DATADOG_APP_KEY=your_datadog_app_key
+CHORUS_DATADOG_SITE=datadoghq.com
+
+# Logging
 CHORUS_LOG_LEVEL=INFO
-CHORUS_API_WORKERS=4
+CHORUS_LOG_STRUCTURED=true
+CHORUS_LOG_FILE_PATH=/var/log/chorus/chorus.log
+
+# Health Monitoring
+CHORUS_HEALTH_CHECK_ENABLED=true
+CHORUS_HEALTH_CHECK_INTERVAL=30.0
 ```
 
 ## 🏥 Health Checks
 
 ### Quick Health Check
 ```bash
-# Run validation script
+# Run comprehensive validation script
 ./validate-deployment.sh
 
-# Manual checks
+# System health check
+python start_system.py health-check
+
+# Configuration validation
+python start_system.py validate-config
+
+# Manual API checks
 curl http://localhost:8000/health
+curl http://localhost:8000/api/v1/system/health
+
+# Dashboard checks
 curl http://localhost:3000  # Development dashboard
-redis-cli ping
+curl http://localhost       # Production dashboard
+
+# Redis connectivity
+redis-cli -h $CHORUS_REDIS_HOST -p $CHORUS_REDIS_PORT ping
+
+# Docker health (if using Docker)
+./deploy-docker.sh health
 ```
 
 ### Service Status

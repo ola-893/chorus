@@ -1,4 +1,0 @@
-# file: /Users/ola/Documents/hackerthons/chorus/backend/conftest.py
-# hypothesis_version: 6.148.7
-
-[0.5, 0.8, 0.9, 'agent_001', 'agent_002', 'cpu', 'low_risk', 'resource_contention']

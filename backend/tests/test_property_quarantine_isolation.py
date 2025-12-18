@@ -85,8 +85,8 @@ class TestQuarantineIsolationEffectiveness:
             key_prefix="test_quarantine"
         )
         
-        network = AgentNetwork(min_agents=3, max_agents=10, quarantine_manager=quarantine_manager)
-        agents = network.create_agents(agent_count)
+        network = AgentNetwork(agent_count=10, quarantine_manager=quarantine_manager)
+        agents = network.create_agents()
         
         # Track resource requests from all agents
         request_tracker = {}
@@ -218,8 +218,8 @@ class TestQuarantineIsolationEffectiveness:
             key_prefix="test_quarantine"
         )
         
-        network = AgentNetwork(min_agents=4, max_agents=10, quarantine_manager=quarantine_manager)
-        agents = network.create_agents(agent_count)
+        network = AgentNetwork(agent_count=10, quarantine_manager=quarantine_manager)
+        agents = network.create_agents()
         
         # Track resource requests
         request_tracker = {}
@@ -338,8 +338,8 @@ class TestQuarantineIsolationEffectiveness:
             key_prefix="test_quarantine"
         )
         
-        network = AgentNetwork(min_agents=3, max_agents=8, quarantine_manager=quarantine_manager)
-        agents = network.create_agents(agent_count)
+        network = AgentNetwork(agent_count=8, quarantine_manager=quarantine_manager)
+        agents = network.create_agents()
         
         # Track resource requests with phases
         request_tracker = {}
@@ -457,8 +457,8 @@ class TestQuarantineIsolationEffectiveness:
             key_prefix="test_quarantine"
         )
         
-        network = AgentNetwork(min_agents=5, max_agents=10, quarantine_manager=quarantine_manager)
-        agents = network.create_agents(agent_count)
+        network = AgentNetwork(agent_count=10, quarantine_manager=quarantine_manager)
+        agents = network.create_agents()
         
         network.start_simulation()
         
@@ -555,7 +555,6 @@ class TestQuarantineIsolationEffectiveness:
         assert quarantine_manager.is_quarantined("nonexistent_agent"), (
             "Non-existent agent should be marked as quarantined"
         )
-    
     def test_edge_case_double_quarantine(self):
         """
         Test edge case: Quarantining an already quarantined agent.
@@ -569,7 +568,7 @@ class TestQuarantineIsolationEffectiveness:
             key_prefix="test_quarantine"
         )
         
-        network = AgentNetwork(min_agents=3, max_agents=5, quarantine_manager=quarantine_manager)
+        network = AgentNetwork(agent_count=5, quarantine_manager=quarantine_manager)
         agents = network.create_agents(3)
         
         network.start_simulation()
@@ -606,7 +605,7 @@ class TestQuarantineIsolationEffectiveness:
             key_prefix="test_quarantine"
         )
         
-        network = AgentNetwork(min_agents=3, max_agents=5, quarantine_manager=quarantine_manager)
+        network = AgentNetwork(agent_count=5, quarantine_manager=quarantine_manager)
         agents = network.create_agents(3)
         
         network.start_simulation()
@@ -639,7 +638,7 @@ class TestQuarantineIsolationEffectiveness:
             key_prefix="test_quarantine"
         )
         
-        network = AgentNetwork(min_agents=5, max_agents=8, quarantine_manager=quarantine_manager)
+        network = AgentNetwork(agent_count=8, quarantine_manager=quarantine_manager)
         agents = network.create_agents(6)
         
         # Reduce resource capacity to create contention

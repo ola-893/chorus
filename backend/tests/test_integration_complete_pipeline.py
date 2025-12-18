@@ -26,15 +26,66 @@ class TestCompletePipeline:
     
     def setup_method(self):
         """Set up test environment before each test."""
+        # Patch RedisClient
+        self.redis_patcher = patch('src.prediction_engine.redis_client.RedisClient')
+        self.mock_redis_cls = self.redis_patcher.start()
+        
+        self.mock_redis = self.mock_redis_cls.return_value
+        self.storage = {}
+        
+        def mock_set(key, value, **kwargs):
+            self.storage[key] = value
+            return True
+        def mock_get(key):
+            return self.storage.get(key)
+        def mock_delete(key):
+            if key in self.storage:
+                del self.storage[key]
+                return 1
+            return 0
+        def mock_set_json(key, value, **kwargs):
+            import json
+            from datetime import datetime
+
+            class DateTimeEncoder(json.JSONEncoder):
+                def default(self, o):
+                    if isinstance(o, datetime):
+                        return o.isoformat()
+                    return super().default(o)
+
+            self.storage[key] = json.dumps(value, cls=DateTimeEncoder)
+            return True
+        def mock_get_json(key):
+            import json
+            val = self.storage.get(key)
+            return json.loads(val) if val else None
+
+        def mock_exists(key):
+            return 1 if key in self.storage else 0
+            
+        self.mock_redis.set.side_effect = mock_set
+        self.mock_redis.get.side_effect = mock_get
+        self.mock_redis.delete.side_effect = mock_delete
+        self.mock_redis.set_json.side_effect = mock_set_json
+        self.mock_redis.get_json.side_effect = mock_get_json
+        self.mock_redis.exists.side_effect = mock_exists
+        self.mock_redis.keys.side_effect = lambda p: [k for k in self.storage.keys() if k.startswith(p.replace('*', ''))]
+        
+        # Inject mock into singletons
+        from src.prediction_engine.trust_manager import trust_manager
+        from src.prediction_engine.quarantine_manager import quarantine_manager
+        trust_manager.score_manager.redis_client = self.mock_redis
+        quarantine_manager.redis_client = self.mock_redis
+
         # Reset all system state by releasing any existing quarantines
-        quarantined_agents = quarantine_manager.get_quarantined_agents()
-        for agent_id in quarantined_agents:
-            quarantine_manager.release_quarantine(agent_id)
+        # (Mock state is empty anyway, but good practice if logic changes)
+        pass
         
     def teardown_method(self):
         """Clean up after each test."""
         # Ensure all systems are stopped
-        pass
+        if hasattr(self, 'redis_patcher'):
+            self.redis_patcher.stop()
     
     @patch('src.prediction_engine.gemini_client.genai')
     def test_complete_pipeline_high_risk_scenario(self, mock_genai):
@@ -44,11 +95,16 @@ class TestCompletePipeline:
         mock_response.text = """
         RISK_SCORE: 0.91
         CONFIDENCE: 0.94
-        AFFECTED_AGENTS: agent_1, agent_2, agent_3
+        AFFECTED_AGENTS: agent_001, agent_002, agent_003
         FAILURE_MODE: Resource exhaustion leading to cascading failures
         NASH_EQUILIBRIUM: Competitive equilibrium with mutual defection
         REASONING: Multiple agents competing for limited resources with escalating priorities
         """
+        
+        # Mock both newer and older API patterns
+        mock_client = Mock()
+        mock_client.generate_content.return_value = mock_response
+        mock_genai.Client.return_value = mock_client
         
         mock_model = Mock()
         mock_model.generate_content.return_value = mock_response
@@ -147,6 +203,11 @@ class TestCompletePipeline:
         REASONING: Agents can cooperatively share resources without conflict
         """
         
+        # Mock both newer and older API patterns
+        mock_client = Mock()
+        mock_client.generate_content.return_value = mock_response
+        mock_genai.Client.return_value = mock_client
+        
         mock_model = Mock()
         mock_model.generate_content.return_value = mock_response
         mock_genai.GenerativeModel.return_value = mock_model
@@ -155,7 +216,7 @@ class TestCompletePipeline:
         
         try:
             # Start system
-            system.start_system(agent_count=4)
+            system.start_system(agent_count=5)
             time.sleep(1.0)
             
             # Get intentions and analyze
@@ -180,7 +241,7 @@ class TestCompletePipeline:
             
             # Verify all agents remain active
             status = system.get_system_status()
-            assert status["active_agents"] == 4
+            assert status["active_agents"] == 5
             assert status["quarantined_agents"] == 0
             
             # Verify trust scores unchanged
@@ -214,6 +275,11 @@ class TestCompletePipeline:
         REASONING: Mixed equilibrium with competitive bias
         """
         
+        # Mock both newer and older API patterns
+        mock_client = Mock()
+        mock_client.generate_content.side_effect = [conflict_response, equilibrium_response]
+        mock_genai.Client.return_value = mock_client
+        
         mock_model = Mock()
         # Return different responses for different calls
         mock_model.generate_content.side_effect = [conflict_response, equilibrium_response]
@@ -222,7 +288,7 @@ class TestCompletePipeline:
         system = ConflictPredictorSystem()
         
         try:
-            system.start_system(agent_count=3)
+            system.start_system(agent_count=5)
             time.sleep(1.0)
             
             # Get intentions
@@ -278,14 +344,16 @@ class TestCompletePipeline:
         system = ConflictPredictorSystem()
         
         try:
-            system.start_system(agent_count=4)
+            system.start_system(agent_count=5)
             
             # Verify normal operation
             status = system.get_system_status()
             assert status["system_running"] is True
             
             # Simulate Gemini API failure
-            with patch('src.prediction_engine.gemini_client.genai.GenerativeModel', 
+            with patch('src.prediction_engine.gemini_client.genai.Client', 
+                      side_effect=Exception("API temporarily unavailable")), \
+                 patch('src.prediction_engine.gemini_client.genai.GenerativeModel', 
                       side_effect=Exception("API temporarily unavailable")):
                 
                 # System should handle API failure gracefully
@@ -376,7 +444,7 @@ class TestCompletePipeline:
         system = ConflictPredictorSystem()
         
         try:
-            system.start_system(agent_count=3)
+            system.start_system(agent_count=5)
             time.sleep(1.0)
             
             # Get an agent to quarantine

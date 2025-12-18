@@ -1,4 +1,0 @@
-# file: /Users/ola/Documents/hackerthons/chorus/backend/src/prediction_engine/system_integration.py
-# hypothesis_version: 6.148.7
-
-[0.85, 0.9, 'active_agents', 'error', 'quarantined_agents', 'system_running', 'total_agents']

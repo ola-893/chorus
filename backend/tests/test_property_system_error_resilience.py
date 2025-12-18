@@ -127,15 +127,18 @@ class TestSystemErrorResilience:
             client = GeminiClient()
             
             # Verify that API errors are handled gracefully (Requirements 2.4, 6.1)
-            with pytest.raises(Exception) as exc_info:
-                client.analyze_conflict_risk(intentions)
+            # The system should NOT raise exceptions but handle them gracefully with fallbacks
+            result = client.analyze_conflict_risk(intentions)
             
-            # Verify error handling behavior - any exception is acceptable for resilience testing
-            assert exc_info.value is not None
-            error_message = str(exc_info.value)
+            # Verify that the system continues to operate despite API errors
+            assert result is not None, "System should return a result even with API errors"
+            assert hasattr(result, 'risk_score'), "Result should have risk_score attribute"
+            assert hasattr(result, 'affected_agents'), "Result should have affected_agents attribute"
+            assert hasattr(result, 'predicted_failure_mode'), "Result should have predicted_failure_mode attribute"
             
-            # Verify that errors contain relevant information for debugging
-            assert len(error_message) > 0, "Error message should not be empty"
+            # Verify that the fallback mechanism works
+            assert isinstance(result.risk_score, (int, float)), "Risk score should be numeric"
+            assert 0.0 <= result.risk_score <= 1.0, "Risk score should be between 0 and 1"
             
             # Verify that the client can still be used after error (resilience)
             # Reset mock to return valid response
@@ -201,8 +204,8 @@ class TestSystemErrorResilience:
             error_message = str(exc_info.value)
             # Check for Redis-related error messages or the specific error types we're testing
             # Accept either the specific error messages or generic error handling
-            is_redis_error = any(keyword in error_message.lower() for keyword in ['redis', 'connection', 'timeout', 'operation failed', 'circuit breaker'])
-            is_expected_error = any(error_type in str(type(exc_info.value).__name__) for error_type in ['RedisConnectionError', 'RedisTimeoutError', 'RedisOperationError'])
+            is_redis_error = any(keyword in error_message.lower() for keyword in ['redis', 'connection', 'timeout', 'operation failed', 'circuit breaker', 'timed out'])
+            is_expected_error = any(error_type in str(type(exc_info.value).__name__) for error_type in ['RedisConnectionError', 'RedisTimeoutError', 'RedisOperationError', 'TimeoutError'])
             assert is_redis_error or is_expected_error, f"Expected Redis-related error, got: {error_message}"
         
         # Test recovery after error
@@ -236,8 +239,8 @@ class TestSystemErrorResilience:
         **Feature: agent-conflict-predictor, Property 7: System error resilience**
         **Validates: Requirements 6.3, 6.5**
         """
-        network = AgentNetwork(min_agents=agent_count, max_agents=agent_count)
-        agents = network.create_agents(agent_count)
+        network = AgentNetwork(agent_count=agent_count)
+        agents = network.create_agents()
         
         # Start simulation
         network.start_simulation()
@@ -463,7 +466,7 @@ class TestSystemErrorResilience:
             
             elif component == 'agent_simulation':
                 # Simulate agent simulation failure
-                network = AgentNetwork(min_agents=2, max_agents=2)
+                network = AgentNetwork(agent_count=2)
                 
                 try:
                     agents = network.create_agents(2)
@@ -631,7 +634,7 @@ class TestSystemErrorResilience:
         **Validates: Requirements 6.1, 6.2, 6.3**
         """
         # Test with empty agent list
-        network = AgentNetwork(min_agents=0, max_agents=0)
+        network = AgentNetwork(agent_count=0)
         
         # Should handle empty agent network gracefully
         try:

@@ -98,6 +98,42 @@ class SystemHealthMonitor:
                     operation="check_gemini_api"
                 )
                 return False
+
+        def check_datadog_api() -> bool:
+            """Check Datadog API availability."""
+            try:
+                from .config import settings
+                if not settings.datadog.enabled:
+                    return True
+                # In a real scenario, check connection or queue size
+                return bool(settings.datadog.api_key)
+            except Exception as e:
+                agent_logger.log_system_error(e, "health_monitor", "check_datadog_api")
+                return False
+
+        def check_kafka_connection() -> bool:
+            """Check Kafka connectivity."""
+            try:
+                from .config import settings
+                if not settings.kafka.enabled:
+                    return True
+                # Basic configuration check
+                # Real connectivity check would involve admin client list_topics
+                return bool(settings.kafka.bootstrap_servers)
+            except Exception as e:
+                agent_logger.log_system_error(e, "health_monitor", "check_kafka_connection")
+                return False
+
+        def check_elevenlabs_api() -> bool:
+            """Check ElevenLabs API availability."""
+            try:
+                from .config import settings
+                if not settings.elevenlabs.enabled:
+                    return True
+                return bool(settings.elevenlabs.api_key)
+            except Exception as e:
+                agent_logger.log_system_error(e, "health_monitor", "check_elevenlabs_api")
+                return False
         
         def check_system_resources() -> bool:
             """Check system resource availability."""
@@ -139,6 +175,27 @@ class SystemHealthMonitor:
             check_gemini_api,
             interval=60.0,
             critical=True
+        )
+
+        self.register_health_check(
+            "datadog_api",
+            check_datadog_api,
+            interval=60.0,
+            critical=False
+        )
+
+        self.register_health_check(
+            "kafka_connection",
+            check_kafka_connection,
+            interval=30.0,
+            critical=True
+        )
+
+        self.register_health_check(
+            "elevenlabs_api",
+            check_elevenlabs_api,
+            interval=60.0,
+            critical=False
         )
         
         self.register_health_check(

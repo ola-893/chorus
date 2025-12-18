@@ -23,8 +23,9 @@ class ConflictAnalysisParser(ConflictAnalysisParserInterface):
     
     def __init__(self):
         """Initialize the parser with regex patterns."""
-        self.risk_score_pattern = re.compile(r'RISK_SCORE:\s*([0-9]*\.?[0-9]+(?:[eE][+-]?[0-9]+)?)', re.IGNORECASE)
-        self.confidence_pattern = re.compile(r'CONFIDENCE:\s*([0-9]*\.?[0-9]+(?:[eE][+-]?[0-9]+)?)', re.IGNORECASE)
+        # Default pattern
+        self.risk_score_pattern = re.compile(r"RISK_SCORE:\s*([\d\.eE\-\+]+)", re.IGNORECASE)
+        self.confidence_pattern = re.compile(r"CONFIDENCE:\s*([\d\.eE\-\+]+)", re.IGNORECASE)
         self.affected_agents_pattern = re.compile(r'AFFECTED_AGENTS:\s*([^\n]+)', re.IGNORECASE)
         self.failure_mode_pattern = re.compile(r'FAILURE_MODE:\s*([^\n]+)', re.IGNORECASE)
         self.nash_equilibrium_pattern = re.compile(r'NASH_EQUILIBRIUM:\s*([^\n]+)', re.IGNORECASE)
@@ -128,20 +129,17 @@ class ConflictAnalysisParser(ConflictAnalysisParserInterface):
     def _extract_risk_score(self, response: str) -> float:
         """Extract and validate risk score from response."""
         match = self.risk_score_pattern.search(response)
-        if not match:
-            raise ValueError("Risk score not found in response")
+        if match:
+            try:
+                score = float(match.group(1))
+                return max(0.0, min(1.0, score))
+            except ValueError:
+                pass
         
-        try:
-            risk_score = float(match.group(1))
-        except ValueError:
-            raise ValueError(f"Invalid risk score format: {match.group(1)}")
-        
-        # Validate range
-        if not (0.0 <= risk_score <= 1.0):
-            logger.warning(f"Risk score {risk_score} outside valid range [0.0, 1.0], clamping")
-            risk_score = max(0.0, min(1.0, risk_score))
-        
-        return risk_score
+        # Fallback: look for just a float if no label found (less reliable)
+        # Or maybe the prompt returns JSON?
+        # For now, raise specific error
+        raise ValueError("Risk score not found in response")
     
     def _extract_confidence(self, response: str) -> float:
         """Extract and validate confidence level from response."""

@@ -14,48 +14,73 @@ This guide covers deployment options for the Chorus Agent Conflict Predictor sys
 
 ## Configuration
 
-1. Copy the example configuration file:
+1. Copy the appropriate configuration template:
    ```bash
+   # For development
    cp .env.example .env
+   
+   # For production
+   cp .env.production .env
+   
+   # For staging
+   cp .env.staging .env  # if available
    ```
 
-2. Edit `.env` with your configuration:
+2. Edit `.env` with your configuration. **Required settings:**
    ```bash
-   # Required: Gemini API key
-   CHORUS_GEMINI_API_KEY=your_actual_api_key_here
+   # Environment Configuration
+   CHORUS_ENVIRONMENT=production  # or development/staging
+   CHORUS_DEBUG=false
    
-   # Redis Configuration (Required for persistence)
-   CHORUS_REDIS_HOST=localhost
+   # Google Gemini API (REQUIRED)
+   CHORUS_GEMINI_API_KEY=your_actual_gemini_api_key_here
+   CHORUS_GEMINI_MODEL=gemini-3-pro-preview
+   
+   # Redis Configuration (REQUIRED for persistence)
+   CHORUS_REDIS_HOST=your_redis_host
    CHORUS_REDIS_PORT=6379
-   CHORUS_REDIS_PASSWORD=your_redis_password  # Optional but recommended
+   CHORUS_REDIS_PASSWORD=your_secure_redis_password
    CHORUS_REDIS_DB=0
-   
-   # Datadog Integration (Optional but recommended for production)
+   ```
+
+3. **Optional but recommended for production:**
+   ```bash
+   # Datadog Observability
    CHORUS_DATADOG_ENABLED=true
    CHORUS_DATADOG_API_KEY=your_datadog_api_key
    CHORUS_DATADOG_APP_KEY=your_datadog_app_key
    CHORUS_DATADOG_SITE=datadoghq.com
    
-   # ElevenLabs Integration (Optional)
+   # ElevenLabs Voice Alerts
    CHORUS_ELEVENLABS_ENABLED=true
    CHORUS_ELEVENLABS_API_KEY=your_elevenlabs_key
    
-   # API Configuration
-   CHORUS_API_HOST=0.0.0.0
-   CHORUS_API_PORT=8000
-   
-   # Trust Scoring Configuration
-   CHORUS_INITIAL_TRUST_SCORE=100
-   CHORUS_TRUST_SCORE_THRESHOLD=30
-   
-   # Logging Configuration
-   CHORUS_LOG_LEVEL=INFO
-   CHORUS_LOG_STRUCTURED=true
+   # Confluent Kafka Event Streaming
+   KAFKA_ENABLED=true
+   KAFKA_BOOTSTRAP_SERVERS=your-kafka-cluster:9092
+   KAFKA_SASL_USERNAME=your_kafka_username
+   KAFKA_SASL_PASSWORD=your_kafka_password
    ```
 
-3. Validate configuration:
+4. **Validate configuration:**
    ```bash
+   # Comprehensive configuration validation
    python start_system.py validate-config
+   
+   # Alternative validation method
+   python -m src.config_validator
+   
+   # Validate with specific environment file
+   python -m src.config_validator --env-file .env.production
+   ```
+
+5. **Test system health:**
+   ```bash
+   # Run health checks
+   python start_system.py health-check
+   
+   # Test individual components
+   python -c "from src.system_lifecycle import lifecycle_manager; print(lifecycle_manager._run_dependency_checks())"
    ```
 
 ## Deployment Options
@@ -205,33 +230,59 @@ Features included:
 
 Check system health:
 ```bash
-# CLI health check
+# Comprehensive health check
 python start_system.py health-check
+
+# Deployment validation script
+./validate-deployment.sh
 
 # API health check (if API mode is running)
 curl http://localhost:8000/health
+curl http://localhost:8000/api/v1/system/health
 
 # Dashboard health check
 curl http://localhost:3000  # Development
 curl http://localhost       # Production
+
+# Redis connectivity check
+redis-cli -h $CHORUS_REDIS_HOST -p $CHORUS_REDIS_PORT ping
+
+# Docker health check
+./deploy-docker.sh health
 ```
 
 ### Configuration Validation
 
 Validate configuration before deployment:
 ```bash
+# Primary validation method
 python start_system.py validate-config
+
+# Alternative validation with detailed output
+python -m src.config_validator
+
+# Validate specific environment file
+python -m src.config_validator --env-file .env.production
+
+# Test configuration loading
+python -c "from src.config import load_settings; settings = load_settings(); print(settings.get_config_summary())"
 ```
 
 ### System Status
 
 Get detailed system status:
 ```bash
-# CLI status
+# System lifecycle status
 python -c "from src.system_lifecycle import get_system_status; print(get_system_status())"
 
 # API status (if API mode is running)
-curl http://localhost:8000/status
+curl http://localhost:8000/api/v1/system/status
+
+# Health monitoring status
+python -c "from src.system_health import health_monitor; print(health_monitor.get_health_status())"
+
+# Docker service status
+./deploy-docker.sh status
 ```
 
 ## Service Management

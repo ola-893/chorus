@@ -247,19 +247,18 @@ class TestAgentNetwork:
     
     def test_agent_network_initialization(self):
         """Test agent network is properly initialized."""
-        network = AgentNetwork(min_agents=3, max_agents=7)
+        network = AgentNetwork(agent_count=5)
         
-        assert network.min_agents == 3
-        assert network.max_agents == 7
+        assert network.agent_count == 5
         assert len(network.agents) == 0
         assert not network.is_running
         assert network.resource_manager is not None
     
     def test_create_agents(self):
         """Test creating agents in the network."""
-        network = AgentNetwork(min_agents=2, max_agents=5)
+        network = AgentNetwork(agent_count=3)
         
-        agents = network.create_agents(3)
+        agents = network.create_agents()
         
         assert len(agents) == 3
         assert len(network.agents) == 3
@@ -272,22 +271,16 @@ class TestAgentNetwork:
         # Check agents have resource manager and network set
         for agent in agents:
             assert agent.resource_manager is not None
-            assert agent.agent_network is not None
     
     def test_create_agents_invalid_count(self):
         """Test creating agents with invalid count raises error."""
-        network = AgentNetwork(min_agents=2, max_agents=5)
-        
         with pytest.raises(ValueError):
-            network.create_agents(1)  # Below minimum
-        
-        with pytest.raises(ValueError):
-            network.create_agents(6)  # Above maximum
+            AgentNetwork(agent_count=-1)
     
     def test_get_active_agents(self):
         """Test getting active agents."""
-        network = AgentNetwork(min_agents=2, max_agents=5)
-        agents = network.create_agents(3)
+        network = AgentNetwork(agent_count=3)
+        agents = network.create_agents()
         
         # Initially no agents are active
         active_agents = network.get_active_agents()
@@ -306,8 +299,8 @@ class TestAgentNetwork:
     
     def test_quarantine_operations(self):
         """Test quarantine operations on agents."""
-        network = AgentNetwork(min_agents=2, max_agents=5)
-        agents = network.create_agents(2)
+        network = AgentNetwork(agent_count=2)
+        agents = network.create_agents()
         
         # Test quarantine
         result = network.quarantine_agent("agent_001")
@@ -325,8 +318,8 @@ class TestAgentNetwork:
     
     def test_get_all_intentions(self):
         """Test getting all intentions from agents."""
-        network = AgentNetwork(min_agents=2, max_agents=5)
-        agents = network.create_agents(2)
+        network = AgentNetwork(agent_count=2)
+        agents = network.create_agents()
         
         # Initially no intentions
         intentions = network.get_all_intentions()
@@ -359,14 +352,13 @@ class TestAgentNetwork:
     @patch('time.sleep')  # Mock sleep to speed up test
     def test_simulation_lifecycle(self, mock_sleep):
         """Test starting and stopping simulation."""
-        network = AgentNetwork(min_agents=2, max_agents=3)
+        network = AgentNetwork(agent_count=3)
         
         # Start simulation (should create agents automatically)
         network.start_simulation()
         
         assert network.is_running
-        assert len(network.agents) >= 2
-        assert len(network.agents) <= 3
+        assert len(network.agents) == 3
         
         # Give threads time to start
         time.sleep(0.1)

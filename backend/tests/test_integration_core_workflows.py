@@ -32,19 +32,74 @@ class TestCoreWorkflows:
     
     def setup_method(self):
         """Set up test environment before each test."""
-        # Reset system state by releasing any existing quarantines
-        try:
-            quarantined_agents = quarantine_manager.get_quarantined_agents()
-            for agent_id in quarantined_agents:
-                quarantine_manager.release_quarantine(agent_id)
-        except Exception:
-            # Ignore Redis connection errors during setup
-            pass
-    
+        # Patch RedisClient to avoid connection errors
+        self.redis_patcher = patch('src.prediction_engine.redis_client.RedisClient')
+        self.mock_redis_cls = self.redis_patcher.start()
+        
+        # Setup mock instance
+        self.mock_redis = self.mock_redis_cls.return_value
+        self.storage = {}
+        
+        def mock_set(key, value, **kwargs):
+            self.storage[key] = value
+            return True
+            
+        def mock_get(key):
+            return self.storage.get(key)
+            
+        def mock_delete(key):
+            if key in self.storage:
+                del self.storage[key]
+                return 1
+            return 0
+            
+        def mock_set_json(key, value, **kwargs):
+            import json
+            from datetime import datetime
+
+            class DateTimeEncoder(json.JSONEncoder):
+                def default(self, o):
+                    if isinstance(o, datetime):
+                        return o.isoformat()
+                    return super().default(o)
+
+            self.storage[key] = json.dumps(value, cls=DateTimeEncoder)
+            return True
+            
+        def mock_get_json(key):
+            import json
+            val = self.storage.get(key)
+            return json.loads(val) if val else None
+            
+        def mock_exists(key):
+            return 1 if key in self.storage else 0
+
+        self.mock_redis.set.side_effect = mock_set
+        self.mock_redis.get.side_effect = mock_get
+        self.mock_redis.delete.side_effect = mock_delete
+        self.mock_redis.set_json.side_effect = mock_set_json
+        self.mock_redis.get_json.side_effect = mock_get_json
+        self.mock_redis.exists.side_effect = mock_exists
+        self.mock_redis.keys.side_effect = lambda p: [k for k in self.storage.keys() if k.startswith(p.replace('*', ''))]
+
+        # Inject mock into existing singletons
+        from src.prediction_engine.trust_manager import trust_manager
+        from src.prediction_engine.quarantine_manager import quarantine_manager
+        
+        trust_manager.score_manager.redis_client = self.mock_redis
+        trust_manager.redis_client = self.mock_redis
+        quarantine_manager.redis_client = self.mock_redis
+        
+        # Reset system state (using the mock)
+        quarantined_agents = quarantine_manager.get_quarantined_agents()
+        for agent_id in quarantined_agents:
+            quarantine_manager.release_quarantine(agent_id)
+
     def teardown_method(self):
         """Clean up after each test."""
-        # Ensure all systems are stopped
-        pass
+        # Stop patcher
+        if hasattr(self, 'redis_patcher'):
+            self.redis_patcher.stop()
     
     # Workflow 1: Agent simulation → conflict prediction → quarantine workflow
     
@@ -55,11 +110,11 @@ class TestCoreWorkflows:
         Validates Requirements: 1.1, 1.2, 1.3, 1.4, 1.5
         """
         # Create agent network directly to avoid system integration issues
-        network = AgentNetwork(min_agents=5, max_agents=10)
+        network = AgentNetwork(agent_count=5)
         
         try:
             # Step 1: Agent Simulation (Requirements 1.1)
-            agents = network.create_agents(5)
+            agents = network.create_agents()
             assert len(agents) == 5, "Should create 5 agents"
             
             # Start simulation (Requirements 1.2, 1.4)
@@ -139,11 +194,11 @@ class TestCoreWorkflows:
         
         Validates Requirements: 4.1, 4.2, 4.3, 4.4
         """
-        network = AgentNetwork(min_agents=5, max_agents=10)
+        network = AgentNetwork(agent_count=5)
         
         try:
             # Create and start agents
-            agents = network.create_agents(5)
+            agents = network.create_agents()
             network.start_simulation()
             
             # Test quarantine functionality (Requirements 4.1, 4.2)
@@ -170,7 +225,7 @@ class TestCoreWorkflows:
                 assert not agent.is_quarantined, "Active agents should not be quarantined"
             
             # Test quarantine release
-            success = network.release_quarantine(target_agent_id)
+            success = network.release_agent_quarantine(target_agent_id)
             assert success, "Should be able to release quarantine"
             
             # Verify agent is released
@@ -318,8 +373,8 @@ class TestCoreWorkflows:
         Validates Requirements: 2.4, 6.1, 6.2, 6.3, 6.5
         """
         # Test Gemini API error handling (Requirements 2.4, 6.1)
-        with patch('src.prediction_engine.gemini_client.genai.GenerativeModel', 
-                  side_effect=Exception("Gemini API temporarily unavailable")):
+        with patch('src.prediction_engine.gemini_client.genai') as mock_genai:
+            mock_genai.GenerativeModel.side_effect = Exception("Gemini API temporarily unavailable")
             
             intentions = [
                 AgentIntention(
@@ -353,10 +408,10 @@ class TestCoreWorkflows:
                 assert "Redis" in str(e) or "connection" in str(e), "Should indicate Redis error"
         
         # Test agent simulation error isolation (Requirements 6.3)
-        network = AgentNetwork(min_agents=5, max_agents=10)
+        network = AgentNetwork(agent_count=10)
         
         try:
-            agents = network.create_agents(5)
+            agents = network.create_agents()
             network.start_simulation()
             
             # Simulate individual agent failure
@@ -396,18 +451,18 @@ class TestCoreWorkflows:
         
         Validates Requirements: 6.1, 6.2, 6.3, 6.5 (concurrent error handling)
         """
-        network = AgentNetwork(min_agents=5, max_agents=10)
+        network = AgentNetwork(agent_count=10)
         
         try:
-            agents = network.create_agents(5)
+            agents = network.create_agents()
             network.start_simulation()
             
             # Test concurrent failures
             error_count = 0
             
             # Simulate API failures
-            with patch('src.prediction_engine.gemini_client.genai.GenerativeModel', 
-                      side_effect=Exception("API overloaded")):
+            with patch('src.prediction_engine.gemini_client.genai') as mock_genai:
+                mock_genai.GenerativeModel.side_effect = Exception("API overloaded")
                 try:
                     client = GeminiClient()
                     client.analyze_conflict_risk([])
@@ -439,11 +494,11 @@ class TestCoreWorkflows:
         
         Validates Requirements: 6.4, 6.5 (error logging and recovery)
         """
-        network = AgentNetwork(min_agents=5, max_agents=10)
+        network = AgentNetwork(agent_count=5)
         
         try:
             # Start system normally
-            agents = network.create_agents(5)
+            agents = network.create_agents()
             network.start_simulation()
             
             # Verify normal operation

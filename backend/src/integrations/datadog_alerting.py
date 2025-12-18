@@ -159,19 +159,32 @@ class DatadogAlertingManager:
         
         for rule_name, rule in self.alert_rules.items():
             try:
+                # Check if monitor already exists
+                existing_monitor_id = await self._find_existing_monitor(rule.name)
+                if existing_monitor_id:
+                    logger.info(f"Monitor already exists for rule {rule_name}: {existing_monitor_id}")
+                    rule.monitor_id = existing_monitor_id
+                    created_monitors[rule_name] = existing_monitor_id
+                    continue
+                
+                # Create new monitor
+                monitor_options = MonitorOptions(
+                    thresholds=MonitorThresholds(**rule.thresholds),
+                    notify_audit=True,
+                    require_full_window=False,
+                    notify_no_data=True,
+                    no_data_timeframe=20,
+                    renotify_interval=0,  # Disable renotification by default
+                    escalation_message=self._get_escalation_message(rule.alert_type)
+                )
+                
                 monitor = Monitor(
                     name=rule.name,
                     type=MonitorType.METRIC_ALERT,
                     query=rule.query,
                     message=rule.message,
                     tags=rule.tags,
-                    options=MonitorOptions(
-                        thresholds=MonitorThresholds(**rule.thresholds),
-                        notify_audit=True,
-                        require_full_window=False,
-                        notify_no_data=True,
-                        no_data_timeframe=20
-                    )
+                    options=monitor_options
                 )
                 
                 response = self.monitors_api.create_monitor(monitor)
@@ -180,10 +193,89 @@ class DatadogAlertingManager:
                 
                 logger.info(f"Created Datadog monitor {response.id} for rule {rule_name}")
                 
+                # Set up escalation for critical alerts
+                if rule.alert_type in [AlertType.MULTIPLE_QUARANTINES, AlertType.TRUST_SCORE_LOW]:
+                    await self._setup_alert_escalation(rule)
+                
             except Exception as e:
                 logger.error(f"Failed to create monitor for rule {rule_name}: {e}")
         
         return created_monitors
+    
+    async def _find_existing_monitor(self, monitor_name: str) -> Optional[int]:
+        """
+        Find existing monitor by name.
+        
+        Args:
+            monitor_name: Name of the monitor to find
+            
+        Returns:
+            Monitor ID if found, None otherwise
+        """
+        try:
+            # Search for monitors with the given name
+            response = self.monitors_api.search_monitors(query=f"name:{monitor_name}")
+            
+            if response.monitors:
+                for monitor in response.monitors:
+                    if monitor.name == monitor_name:
+                        return monitor.id
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error searching for existing monitor {monitor_name}: {e}")
+            return None
+    
+    def _get_escalation_message(self, alert_type: AlertType) -> str:
+        """
+        Get escalation message for alert type.
+        
+        Args:
+            alert_type: Type of alert
+            
+        Returns:
+            Escalation message string
+        """
+        escalation_messages = {
+            AlertType.TRUST_SCORE_LOW: "Trust score alert requires immediate attention. @pagerduty-escalation @on-call-engineer",
+            AlertType.MULTIPLE_QUARANTINES: "Multiple quarantine alert indicates possible cascade failure. @incident-commander @pagerduty-escalation",
+            AlertType.SYSTEM_HEALTH: "System health degradation requires investigation. @pagerduty",
+            AlertType.CONFLICT_RATE: "High conflict rate indicates system stress. @incident-commander"
+        }
+        
+        return escalation_messages.get(alert_type, "Alert requires escalation. @pagerduty-escalation")
+    
+    async def _setup_alert_escalation(self, rule: AlertRule):
+        """
+        Set up alert escalation for critical alerts.
+        
+        Args:
+            rule: Alert rule to set up escalation for
+        """
+        try:
+            # Configure escalation timing based on alert type
+            escalation_config = {
+                AlertType.TRUST_SCORE_LOW: {"renotify_interval": 30, "escalation_time": 30},
+                AlertType.MULTIPLE_QUARANTINES: {"renotify_interval": 15, "escalation_time": 15},
+                AlertType.SYSTEM_HEALTH: {"renotify_interval": 60, "escalation_time": 60},
+                AlertType.CONFLICT_RATE: {"renotify_interval": 45, "escalation_time": 45}
+            }
+            
+            config = escalation_config.get(rule.alert_type, {"renotify_interval": 60, "escalation_time": 60})
+            
+            # Update monitor with escalation settings
+            if rule.monitor_id:
+                monitor = self.monitors_api.get_monitor(rule.monitor_id)
+                monitor.options.renotify_interval = config["renotify_interval"]
+                monitor.options.escalation_message = self._get_escalation_message(rule.alert_type)
+                
+                self.monitors_api.update_monitor(rule.monitor_id, monitor)
+                
+                logger.info(f"Set up escalation for monitor {rule.monitor_id} with {config['renotify_interval']}min intervals")
+                
+        except Exception as e:
+            logger.error(f"Failed to set up escalation for rule {rule.name}: {e}")
     
     def should_trigger_alert(self, alert_type: str, value: float, threshold: float) -> bool:
         """
@@ -250,22 +342,140 @@ class DatadogAlertingManager:
         return None
     
     def check_multiple_quarantines_alert(self, quarantined_count: int, threshold: int) -> Optional[str]:
-        """Check and potentially trigger multiple quarantines alert."""
+        """Check and potentially trigger multiple quarantines alert with escalation logic."""
         if self.should_trigger_alert("multiple_quarantines", quarantined_count, threshold):
             alert_id = f"quarantines_{int(datetime.now().timestamp())}"
             severity = self.get_alert_severity("multiple_quarantines", quarantined_count)
+            
+            # Determine escalation level based on quarantine count
+            escalation_level = self._determine_quarantine_escalation_level(quarantined_count)
             
             self.active_alerts[alert_id] = {
                 "type": "multiple_quarantines",
                 "quarantined_count": quarantined_count,
                 "severity": severity,
+                "escalation_level": escalation_level,
                 "triggered_at": datetime.now(),
-                "resolved": False
+                "resolved": False,
+                "escalation_notifications_sent": []
             }
             
-            logger.critical(f"Multiple quarantines alert triggered: {quarantined_count} agents")
+            logger.critical(f"Multiple quarantines alert triggered: {quarantined_count} agents (escalation level: {escalation_level})")
+            
+            # Trigger immediate escalation for high-risk scenarios
+            if escalation_level >= 3:  # 5+ agents quarantined
+                self._trigger_immediate_escalation(alert_id, quarantined_count)
+            
             return alert_id
         return None
+    
+    def _determine_quarantine_escalation_level(self, quarantined_count: int) -> int:
+        """
+        Determine escalation level based on number of quarantined agents.
+        
+        Args:
+            quarantined_count: Number of quarantined agents
+            
+        Returns:
+            Escalation level (1-4)
+        """
+        if quarantined_count >= 10:
+            return 4  # Emergency - possible system-wide failure
+        elif quarantined_count >= 7:
+            return 3  # Critical - major cascade failure
+        elif quarantined_count >= 5:
+            return 2  # High - significant cascade failure
+        else:
+            return 1  # Standard - multiple quarantines
+    
+    def _trigger_immediate_escalation(self, alert_id: str, quarantined_count: int):
+        """
+        Trigger immediate escalation for high-risk quarantine scenarios.
+        
+        Args:
+            alert_id: ID of the alert to escalate
+            quarantined_count: Number of quarantined agents
+        """
+        try:
+            alert_data = self.active_alerts.get(alert_id)
+            if not alert_data:
+                return
+            
+            escalation_level = alert_data.get("escalation_level", 1)
+            
+            # Send escalation notifications based on level
+            if escalation_level >= 4:
+                # Emergency escalation - notify incident commander immediately
+                self._send_escalation_notification(
+                    alert_id,
+                    "EMERGENCY",
+                    f"EMERGENCY: {quarantined_count} agents quarantined - possible system-wide failure",
+                    ["@incident-commander", "@pagerduty-escalation", "@on-call-engineer"]
+                )
+            elif escalation_level >= 3:
+                # Critical escalation - notify incident commander
+                self._send_escalation_notification(
+                    alert_id,
+                    "CRITICAL",
+                    f"CRITICAL: {quarantined_count} agents quarantined - major cascade failure detected",
+                    ["@incident-commander", "@pagerduty-escalation"]
+                )
+            elif escalation_level >= 2:
+                # High escalation - notify escalation team
+                self._send_escalation_notification(
+                    alert_id,
+                    "HIGH",
+                    f"HIGH: {quarantined_count} agents quarantined - significant cascade failure",
+                    ["@pagerduty-escalation", "@slack-critical"]
+                )
+            
+            # Track escalation notifications
+            alert_data["escalation_notifications_sent"].append({
+                "level": escalation_level,
+                "timestamp": datetime.now(),
+                "reason": "immediate_escalation"
+            })
+            
+        except Exception as e:
+            logger.error(f"Failed to trigger immediate escalation for alert {alert_id}: {e}")
+    
+    def _send_escalation_notification(self, alert_id: str, severity: str, message: str, channels: List[str]):
+        """
+        Send escalation notification to specified channels.
+        
+        Args:
+            alert_id: ID of the alert
+            severity: Severity level
+            message: Escalation message
+            channels: List of notification channels
+        """
+        try:
+            # Send to Datadog as a custom event
+            from .datadog_client import datadog_client
+            
+            datadog_client.send_log(
+                f"[ESCALATION] {message}",
+                level="CRITICAL",
+                context={
+                    "alert_id": alert_id,
+                    "severity": severity,
+                    "escalation_channels": channels,
+                    "escalation_type": "automatic"
+                }
+            )
+            
+            # Send escalation metric
+            datadog_client.send_metric(
+                "chorus.alert.escalation",
+                1.0,
+                tags=[f"alert_id:{alert_id}", f"severity:{severity.lower()}"],
+                metric_type="count"
+            )
+            
+            logger.info(f"Sent escalation notification for alert {alert_id} to channels: {channels}")
+            
+        except Exception as e:
+            logger.error(f"Failed to send escalation notification for alert {alert_id}: {e}")
     
     def check_system_health_alert(self, component: str, status: str) -> Optional[str]:
         """Check and potentially trigger system health alert."""
@@ -506,18 +716,49 @@ class DatadogAlertingManager:
         for alert_id, alert_data in list(self.active_alerts.items()):
             alert_type = alert_data.get("type")
             
+            # Check if alert has been active long enough for resolution (prevent flapping)
+            triggered_at = alert_data.get("triggered_at")
+            if triggered_at and (datetime.now() - triggered_at).total_seconds() < 60:
+                continue  # Wait at least 1 minute before considering resolution
+            
             # Create alert-specific system state for checking resolution conditions
             alert_specific_state = current_system_state.copy()
             
             # For trust score alerts, check if the specific agent's trust score has recovered
             if alert_type == "trust_score_low":
                 agent_id = alert_data.get("agent_id")
-                if agent_id and "trust_score" in current_system_state:
+                if agent_id and "agent_trust_scores" in current_system_state:
+                    agent_scores = current_system_state["agent_trust_scores"]
+                    if agent_id in agent_scores:
+                        alert_specific_state = {"trust_score": agent_scores[agent_id]}
+                    else:
+                        continue  # Agent not found in current state
+                elif agent_id and "trust_score" in current_system_state:
                     # Use the trust score from the system state
                     alert_specific_state = {"trust_score": current_system_state["trust_score"]}
             
-            # Check if conditions are met for auto-resolution
-            if self.check_auto_resolution_conditions(alert_type, alert_specific_state):
+            # For multiple quarantines, check current quarantine count
+            elif alert_type == "multiple_quarantines":
+                if "quarantined_count" in current_system_state:
+                    alert_specific_state = {"quarantined_count": current_system_state["quarantined_count"]}
+            
+            # For system health, check component status
+            elif alert_type == "system_health":
+                component = alert_data.get("component")
+                if component and "component_health" in current_system_state:
+                    component_health = current_system_state["component_health"]
+                    if component in component_health:
+                        alert_specific_state = {"component_status": component_health[component]}
+                    else:
+                        continue  # Component not found in current state
+            
+            # For conflict rate, check current rate
+            elif alert_type == "conflict_rate":
+                if "conflict_rate" in current_system_state:
+                    alert_specific_state = {"conflict_rate": current_system_state["conflict_rate"]}
+            
+            # Check if conditions are met for auto-resolution with stability check
+            if await self._check_stable_resolution_conditions(alert_id, alert_type, alert_specific_state):
                 # Resolve the alert
                 self.resolve_alert_automatically(alert_id, "condition_cleared")
                 
@@ -528,7 +769,8 @@ class DatadogAlertingManager:
                     {
                         "previous_state": alert_data,
                         "current_state": current_system_state,
-                        "resolution_time": datetime.now().isoformat()
+                        "resolution_time": datetime.now().isoformat(),
+                        "resolution_method": "automatic_stable_recovery"
                     }
                 )
                 
@@ -536,6 +778,56 @@ class DatadogAlertingManager:
         
         if resolved_alerts:
             logger.info(f"Auto-resolved {len(resolved_alerts)} alerts: {resolved_alerts}")
+    
+    async def _check_stable_resolution_conditions(self, alert_id: str, alert_type: str, current_values: Dict[str, Any]) -> bool:
+        """
+        Check if resolution conditions are stable (not flapping).
+        
+        Args:
+            alert_id: ID of the alert
+            alert_type: Type of alert
+            current_values: Current system values
+            
+        Returns:
+            True if conditions are stable for resolution
+        """
+        # First check if basic resolution conditions are met
+        if not self.check_auto_resolution_conditions(alert_type, current_values):
+            return False
+        
+        # Track resolution condition history to prevent flapping
+        resolution_history_key = f"resolution_history_{alert_id}"
+        if not hasattr(self, '_resolution_history'):
+            self._resolution_history = {}
+        
+        if resolution_history_key not in self._resolution_history:
+            self._resolution_history[resolution_history_key] = []
+        
+        # Add current check to history
+        self._resolution_history[resolution_history_key].append({
+            "timestamp": datetime.now(),
+            "conditions_met": True,
+            "values": current_values
+        })
+        
+        # Keep only last 5 minutes of history
+        cutoff_time = datetime.now() - timedelta(minutes=5)
+        self._resolution_history[resolution_history_key] = [
+            entry for entry in self._resolution_history[resolution_history_key]
+            if entry["timestamp"] > cutoff_time
+        ]
+        
+        # Require at least 3 consecutive positive checks over 2 minutes for stability
+        recent_checks = [
+            entry for entry in self._resolution_history[resolution_history_key]
+            if entry["timestamp"] > datetime.now() - timedelta(minutes=2)
+        ]
+        
+        if len(recent_checks) >= 3 and all(entry["conditions_met"] for entry in recent_checks):
+            logger.info(f"Stable resolution conditions detected for alert {alert_id}")
+            return True
+        
+        return False
     
     def get_alert_statistics(self) -> Dict[str, Any]:
         """

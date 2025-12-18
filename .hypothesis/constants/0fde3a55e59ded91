@@ -1,4 +1,0 @@
-# file: /Users/ola/Documents/hackerthons/chorus/backend/src/integrations/kafka_client.py
-# hypothesis_version: 6.148.7
-
-[0.1, 1.0, 10.0, 30.0, 'INFO', 'TOPIC_ALREADY_EXISTS', 'TopicExists', 'WARNING', 'args', 'auto.offset.reset', 'bootstrap.servers', 'chorus-backend-group', 'client.id', 'commit', 'create_topics', 'delivery_report', 'earliest', 'enable.auto.commit', 'group.id', 'init_consumer', 'init_producer', 'kafka', 'kafka_client', 'kafka_init', 'kafka_subscribe', 'kafka_topic_create', 'key', 'offset', 'partition', 'poll', 'poll_error', 'produce', 'sasl.mechanism', 'sasl.password', 'sasl.username', 'security.protocol', 'subscribe', 'timestamp', 'topic', 'utf-8', 'value']

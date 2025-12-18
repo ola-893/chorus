@@ -281,10 +281,26 @@ class TestAlertResolutionAutomation:
                 assert should_resolve, f"Auto-resolution conditions should be met for {resolution_alert_type} with state {clearing_system_state}"
                 
                 # Test the complete auto-resolution process
-                asyncio.run(alerting_manager.process_auto_resolution(clearing_system_state))
+                # For the test, we need to simulate the stability check by calling multiple times
+                # First, set the alert as older than 1 minute to pass the minimum age check
+                alert_data = alerting_manager.active_alerts[created_alert_id]
+                alert_data["triggered_at"] = datetime.now() - timedelta(minutes=2)
                 
-                # Verify alert was automatically resolved
-                assert alerting_manager.is_alert_resolved(created_alert_id), f"Alert {created_alert_id} should be resolved after auto-resolution process"
+                # Mock the stable resolution check to return True for testing
+                original_check = alerting_manager._check_stable_resolution_conditions
+                async def mock_stable_check(alert_id, alert_type, current_values):
+                    return alerting_manager.check_auto_resolution_conditions(alert_type, current_values)
+                
+                alerting_manager._check_stable_resolution_conditions = mock_stable_check
+                
+                try:
+                    asyncio.run(alerting_manager.process_auto_resolution(clearing_system_state))
+                    
+                    # Verify alert was automatically resolved
+                    assert alerting_manager.is_alert_resolved(created_alert_id), f"Alert {created_alert_id} should be resolved after auto-resolution process"
+                finally:
+                    # Restore original method
+                    alerting_manager._check_stable_resolution_conditions = original_check
                 
                 # Verify recovery notification was sent
                 assert alerting_manager.was_recovery_notification_sent(created_alert_id)

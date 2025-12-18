@@ -29,6 +29,15 @@ class GraphTopologyManager:
         self.nodes: Dict[str, GraphNode] = {}
         self.update_topic = settings.kafka.causal_graph_updates_topic
         
+        # Subscribe to quarantine events
+        event_bus.subscribe("agent_quarantined", self._handle_quarantine_event)
+        
+    def _handle_quarantine_event(self, data: Dict):
+        """Handle agent quarantine event."""
+        agent_id = data.get("agent_id")
+        if agent_id:
+            self.update_node_status(agent_id, "quarantined", 0)
+        
     def add_interaction(self, source: str, target: str, interaction_type: str = "communication"):
         """
         Add an interaction (edge) to the graph.

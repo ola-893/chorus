@@ -165,6 +165,7 @@ class TestRedisQuarantineManager:
         mock_agent = Mock()
         mock_agent.agent_id = agent_id
         mock_agent.release_quarantine = Mock()
+        self.mock_agent_network.agents = [mock_agent]  # Add agents attribute
         self.mock_agent_network.get_active_agents.return_value = [mock_agent]
         
         result = self.manager.release_quarantine(agent_id)

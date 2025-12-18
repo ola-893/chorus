@@ -2,6 +2,8 @@
 Gemini API client implementation for conflict prediction.
 """
 import logging
+import hashlib
+import json
 from typing import List, Optional
 import google.genai as genai
 from google.genai.errors import APIError, ClientError, ServerError
@@ -19,6 +21,7 @@ from src.error_handling import (
     system_recovery_context
 )
 from src.integrations.datadog_client import datadog_client
+from src.prediction_engine.redis_client import RedisClient
 
 
 logger = logging.getLogger(__name__)
@@ -46,6 +49,13 @@ class GeminiClient(GeminiClientInterface):
         self._client = None
         self.prompt_builder = GameTheoryPromptBuilder()
         self.parser = ConflictAnalysisParser()
+        self.redis = None
+        
+        try:
+            self.redis = RedisClient()
+        except Exception as e:
+            logger.warning(f"Redis unavailable for Gemini caching: {e}")
+            
         self._initialize_client()
     
     def _initialize_client(self) -> None:
@@ -143,6 +153,21 @@ class GeminiClient(GeminiClientInterface):
             # Build the prompt using GameTheoryPromptBuilder
             prompt = self.prompt_builder.build_conflict_analysis_prompt(agent_intentions)
             
+            # Check cache
+            if self.redis:
+                try:
+                    cache_key = f"gemini:conflict:{hashlib.md5(prompt.encode()).hexdigest()}"
+                    cached_response = self.redis.get(cache_key)
+                    if cached_response:
+                        logger.info("Cache hit for conflict analysis")
+                        analysis = self.parser.parse_conflict_analysis(cached_response)
+                        # We need to update timestamp for cached result to be current
+                        from datetime import datetime
+                        analysis.timestamp = datetime.now()
+                        return analysis
+                except Exception as e:
+                    logger.warning(f"Cache lookup failed: {e}")
+            
             response = self._client.generate_content(prompt)
             
             if not response or not response.text:
@@ -150,6 +175,14 @@ class GeminiClient(GeminiClientInterface):
             
             # Parse the response using ConflictAnalysisParser
             analysis = self.parser.parse_conflict_analysis(response.text)
+            
+            # Cache the raw text response
+            if self.redis:
+                try:
+                    # Cache for 1 hour
+                    self.redis.set(cache_key, response.text, ttl=3600)
+                except Exception as e:
+                    logger.warning(f"Cache write failed: {e}")
             
             # Emit conflict prediction event
             try:
@@ -190,59 +223,56 @@ class GeminiClient(GeminiClientInterface):
             
             return analysis
             
-        except (ClientError, ServerError) as e:
+        except (ClientError, ServerError, APIError, Exception) as e:
             # Send error metrics to Datadog
             try:
                 datadog_client.send_metric(
                     "chorus.gemini.analysis_error",
                     1.0,
-                    tags=[f"error_type:connection", f"agent_count:{len(agent_intentions)}"],
+                    tags=[f"error_type:exception", f"agent_count:{len(agent_intentions)}"],
                     metric_type="count"
                 )
             except Exception:
                 pass
             
-            agent_logger.log_system_error(
-                e,
-                component="gemini_client",
-                operation="analyze_conflict_risk",
-                context={"error_type": "connection_error", "agent_count": len(agent_intentions)}
-            )
-            raise
-        except APIError as e:
-            # Send error metrics to Datadog
-            try:
-                datadog_client.send_metric(
-                    "chorus.gemini.analysis_error",
-                    1.0,
-                    tags=[f"error_type:api", f"agent_count:{len(agent_intentions)}"],
-                    metric_type="count"
-                )
-            except Exception:
-                pass
+            logger.error(f"Gemini API failure: {e}. Attempting rule-based fallback.")
             
-            agent_logger.log_system_error(
-                e,
-                component="gemini_client",
-                operation="analyze_conflict_risk",
-                context={"error_type": "api_error", "agent_count": len(agent_intentions)}
-            )
-            raise
-        except Exception as e:
-            # Send error metrics to Datadog
-            try:
-                datadog_client.send_metric(
-                    "chorus.gemini.analysis_error",
-                    1.0,
-                    tags=[f"error_type:unexpected", f"agent_count:{len(agent_intentions)}"],
-                    metric_type="count"
+            # Execute rule-based fallback
+            return self._rule_based_conflict_analysis(agent_intentions)
+
+    def _rule_based_conflict_analysis(self, agent_intentions: List[AgentIntention]) -> ConflictAnalysis:
+                """
+                Fallback method to analyze conflict risk using simple heuristics when API is down.
+                """
+                from datetime import datetime
+                
+                # Simple heuristic: if multiple agents want the same resource, risk is high
+                resource_counts = {}
+                for intention in agent_intentions:
+                    res = intention.resource_type
+                    resource_counts[res] = resource_counts.get(res, 0) + 1
+                    
+                max_contention = max(resource_counts.values()) if resource_counts else 0
+                
+                if max_contention > 2:
+                    risk_score = 0.8
+                    failure_mode = "High resource contention (Fallback detection)"
+                elif max_contention > 1:
+                    risk_score = 0.5
+                    failure_mode = "Moderate resource contention (Fallback detection)"
+                else:
+                    risk_score = 0.1
+                    failure_mode = "Low risk (Fallback detection)"
+                    
+                return ConflictAnalysis(
+                    risk_score=risk_score,
+                    confidence_level=0.5, # Lower confidence for fallback
+                    affected_agents=[i.agent_id for i in agent_intentions],
+                    predicted_failure_mode=failure_mode,
+                    nash_equilibrium=None,
+                    timestamp=datetime.now()
                 )
-            except Exception:
-                pass
-            
-            logger.error(f"Unexpected error during conflict analysis: {e}")
-            raise
-    
+        
     def calculate_nash_equilibrium(self, game_state: GameState) -> EquilibriumSolution:
         """
         Calculate Nash equilibrium for the given game state.

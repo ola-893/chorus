@@ -1,4 +1,0 @@
-# file: /Users/ola/Documents/hackerthons/chorus/backend/src/system_lifecycle.py
-# hypothesis_version: 6.148.7
-
-[2.0, 10.0, 15.0, 30.0, '--env-file', 'Command to execute', 'DEBUG', 'ERROR', 'INFO', 'Path to .env file', 'WARNING', '__main__', 'attempt', 'attempts', 'check_configuration', 'check_gemini_api', 'command', 'component_statuses', 'configuration', 'debug', 'degraded', 'dependency', 'dependency_checks', 'dependency_count', 'environment', 'failed', 'failed_dependencies', 'forced_health_check', 'gemini_api', 'health', 'healthy', 'is_healthy', 'last_updated', 'lifecycle_manager', 'max_attempts', 'name', 'overall_status', 'redis_connection', 'required', 'results', 'retry_delay', 'running', 'shutdown', 'shutdown_callbacks', 'signal', 'signal_received', 'start', 'start_time', 'starting', 'startup', 'startup_callbacks', 'startup_time', 'startup_warning', 'state', 'status', 'stopped', 'stopping', 'system_startup_begin', 'timeout', 'uptime', '✓', '✗']

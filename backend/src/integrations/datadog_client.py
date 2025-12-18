@@ -27,6 +27,9 @@ except ImportError:
     Series = None
     Point = None
 
+import socket
+import threading
+from collections import deque
 from ..config import settings
 from ..error_handling import CircuitBreaker, SystemRecoveryError
 
@@ -55,8 +58,16 @@ class DatadogClient:
         self.logs_api = None
         self.metrics_api = None
         
+        # Buffering
+        self.metric_buffer = deque(maxlen=1000)
+        self.log_buffer = deque(maxlen=1000)
+        self.flush_interval = 5.0
+        self.running = False
+        self.flush_thread = None
+        
         if self.enabled and self.api_key and self.app_key:
             self._initialize_client()
+            self._start_flush_thread()
     
     def _initialize_client(self):
         """Initialize the Datadog API client."""
@@ -80,16 +91,78 @@ class DatadogClient:
             logger.error(f"Failed to initialize Datadog client: {e}")
             self.enabled = False
 
-    @datadog_circuit_breaker
+    def _start_flush_thread(self):
+        """Start background thread for flushing buffers."""
+        self.running = True
+        self.flush_thread = threading.Thread(target=self._flush_loop, daemon=True)
+        self.flush_thread.start()
+
+    def _flush_loop(self):
+        """Background loop to flush buffers periodically."""
+        while self.running:
+            try:
+                time.sleep(self.flush_interval)
+                self._flush_buffers()
+            except Exception as e:
+                # Don't let flush errors kill the thread
+                logger.debug(f"Error in Datadog flush loop: {e}")
+
+    def _flush_buffers(self):
+        """Flush pending metrics and logs."""
+        # Flush metrics
+        while self.metric_buffer:
+            try:
+                # Peek first
+                metric_data = self.metric_buffer[0]
+                self._send_metric_direct(
+                    metric_data['name'], 
+                    metric_data['value'], 
+                    metric_data.get('tags'), 
+                    metric_data.get('metric_type')
+                )
+                # Pop if successful
+                self.metric_buffer.popleft()
+            except Exception:
+                # Stop flushing on error to preserve order/data
+                break
+
+        # Flush logs
+        while self.log_buffer:
+            try:
+                log_data = self.log_buffer[0]
+                self._send_log_direct(
+                    log_data['message'],
+                    log_data.get('level'),
+                    log_data.get('context'),
+                    log_data.get('source')
+                )
+                self.log_buffer.popleft()
+            except Exception:
+                break
+
+    def stop(self):
+        """Stop the client and flush remaining buffers."""
+        self.running = False
+        if self.flush_thread:
+            self.flush_thread.join(timeout=2.0)
+        self._flush_buffers()
+
     def send_log(self, message: str, level: str = "INFO", context: Optional[Dict[str, Any]] = None, source: str = "chorus-backend"):
+        """Queue a log for sending."""
+        if not self.enabled:
+            return
+
+        self.log_buffer.append({
+            "message": message,
+            "level": level,
+            "context": context,
+            "source": source
+        })
+
+    @datadog_circuit_breaker
+    def _send_log_direct(self, message: str, level: str = "INFO", context: Optional[Dict[str, Any]] = None, source: str = "chorus-backend"):
         """
-        Send a log entry to Datadog.
-        
-        Args:
-            message: Log message content
-            level: Log level (INFO, WARN, ERROR, etc.)
-            context: Additional context dictionary
-            source: Log source
+        Internal method to send log immediately.
         """
         if not self.enabled or not self.logs_api:
             return
@@ -104,6 +177,7 @@ class DatadogClient:
                         service="chorus-conflict-predictor",
                         status=level,
                         additional_properties=context or {},
+                        hostname=socket.gethostname()
                     )
                 ]
             )
@@ -115,16 +189,22 @@ class DatadogClient:
             logger.error(f"Failed to send log to Datadog: {e}")
             raise  # Let circuit breaker handle the failure
 
-    @datadog_circuit_breaker
     def send_metric(self, metric_name: str, value: float, tags: Optional[List[str]] = None, metric_type: str = "gauge"):
+        """Queue a metric for sending."""
+        if not self.enabled:
+            return
+
+        self.metric_buffer.append({
+            "name": metric_name, 
+            "value": value, 
+            "tags": tags, 
+            "metric_type": metric_type
+        })
+
+    @datadog_circuit_breaker
+    def _send_metric_direct(self, metric_name: str, value: float, tags: Optional[List[str]] = None, metric_type: str = "gauge"):
         """
-        Send a metric to Datadog.
-        
-        Args:
-            metric_name: Name of the metric
-            value: Value of the metric
-            tags: List of tags (e.g., ["env:prod", "region:us-east-1"])
-            metric_type: Type of metric (gauge, count, rate)
+        Internal method to send metric immediately.
         """
         if not self.enabled or not self.metrics_api:
             return

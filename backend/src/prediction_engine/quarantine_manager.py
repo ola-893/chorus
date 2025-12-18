@@ -13,6 +13,8 @@ from .redis_client import redis_client
 from ..config import settings
 from ..logging_config import get_agent_logger
 
+from ..event_bus import event_bus
+
 logger = logging.getLogger(__name__)
 agent_logger = get_agent_logger(__name__)
 
@@ -157,6 +159,13 @@ class RedisQuarantineManager(QuarantineManagerInterface):
                     success=True,
                     context={"timestamp": action.timestamp.isoformat()}
                 )
+                
+                # Publish event
+                event_bus.publish("agent_quarantined", {
+                    "agent_id": agent_id,
+                    "reason": reason,
+                    "timestamp": action.timestamp.isoformat()
+                })
                 
                 return QuarantineResult(
                     success=True,
@@ -313,11 +322,11 @@ class RedisQuarantineManager(QuarantineManagerInterface):
                 logger.warning("No agent network available for quarantine release")
                 return
             
-            # Find the agent in the network
-            active_agents = self.agent_network.get_active_agents()
+            # Find the agent in the network (search all agents, not just active ones)
+            all_agents = self.agent_network.agents
             target_agent = None
             
-            for agent in active_agents:
+            for agent in all_agents:
                 if agent.agent_id == agent_id:
                     target_agent = agent
                     break
@@ -327,7 +336,7 @@ class RedisQuarantineManager(QuarantineManagerInterface):
                 target_agent.release_quarantine()
                 logger.info(f"Released quarantine on agent {agent_id}")
             else:
-                logger.warning(f"Agent {agent_id} not found in active agents for quarantine release")
+                logger.warning(f"Agent {agent_id} not found in agent network for quarantine release")
                 
         except Exception as e:
             logger.error(f"Error releasing quarantine on agent {agent_id}: {e}")

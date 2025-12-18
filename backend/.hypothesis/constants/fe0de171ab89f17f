@@ -1,4 +1,0 @@
-# file: /Users/ola/Documents/hackerthons/chorus/backend/src/prediction_engine/simulator.py
-# hypothesis_version: 6.148.7
-
-[0.1, 0.8, 1.0, 2.0, 3.0, 5.0, 10.0, -100, 100, 1000, 'active_intentions', 'current_usage', 'is_quarantined', 'total_capacity', 'trust_score']

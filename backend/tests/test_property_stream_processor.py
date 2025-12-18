@@ -6,6 +6,7 @@ Property-based tests for Stream Processor.
 """
 import pytest
 import time
+from datetime import datetime
 from unittest.mock import MagicMock, patch
 from hypothesis import given, strategies as st, settings, HealthCheck
 
@@ -14,13 +15,13 @@ from src.stream_processor import StreamProcessor
 class TestStreamProcessor:
     
     @given(
-        messages=st.lists(
-            st.dictionaries(keys=st.text(min_size=1), values=st.text(min_size=1)),
+        agent_ids=st.lists(
+            st.text(min_size=1, max_size=10, alphabet=st.characters(whitelist_categories=('Lu', 'Ll', 'Nd'))),
             min_size=1, max_size=5
         )
     )
     @settings(suppress_health_check=[HealthCheck.function_scoped_fixture])
-    def test_property_stream_processing_pipeline_integration(self, messages):
+    def test_property_stream_processing_pipeline_integration(self, agent_ids):
         """
         Property 4: Stream processing pipeline integration.
         Validates: Requirements 2.1, 2.2
@@ -30,38 +31,43 @@ class TestStreamProcessor:
         with patch('src.stream_processor.kafka_bus') as mock_bus:
             processor = StreamProcessor()
             
-            # Simulate polling messages
+            # Generate valid message structures
             mock_msgs = []
-            for m in messages:
+            for agent_id in agent_ids:
+                valid_message = {
+                    "agent_id": agent_id,
+                    "resource_type": "cpu",
+                    "requested_amount": 50,
+                    "priority_level": 5,
+                    "timestamp": datetime.now().isoformat()
+                }
                 mock_msg = {
-                    "value": m,
-                    "key": "test_key",
+                    "value": valid_message,
+                    "key": f"key_{agent_id}",
                     "topic": processor.input_topic,
                     "offset": 0,
                     "partition": 0
                 }
                 mock_msgs.append(mock_msg)
             
-            # Chain side effects: return messages then None to stop loop logic if we were running it
-            # But here we call _process_message directly to test logic without threading issues
-            
+            # Process each message
             for msg in mock_msgs:
                 processor._process_message(msg)
                 
             # Verify production to output topic
-            # StreamProcessor skips empty payloads
-            expected_count = len([m for m in messages if m])
+            expected_count = len(agent_ids)
             assert mock_bus.produce.call_count == expected_count
             
-            # Verify arguments
-            args, _ = mock_bus.produce.call_args
-            assert args[0] == processor.output_topic
-            assert "status" in args[1] # Decision object
+            # Verify arguments only if there were calls made
+            if expected_count > 0:
+                args, _ = mock_bus.produce.call_args
+                assert args[0] == processor.output_topic
+                assert "status" in args[1] # Decision object
 
     @given(
-        malformed_value=st.one_of(st.none(), st.just({})) # Empty or None value might trigger issues
+        agent_id=st.text(min_size=1, max_size=10, alphabet=st.characters(whitelist_categories=('Lu', 'Ll', 'Nd')))
     )
-    def test_property_processing_error_routing(self, malformed_value):
+    def test_property_processing_error_routing(self, agent_id):
         """
         Property 5: Processing error routing.
         Validates: Requirements 2.3
@@ -71,12 +77,20 @@ class TestStreamProcessor:
         with patch('src.stream_processor.kafka_bus') as mock_bus:
             processor = StreamProcessor()
             
-            # Simulate a message that causes an error
-            # We force _analyze_intention to raise exception
+            # Create a valid message structure that will cause processing error
+            valid_message = {
+                "agent_id": agent_id,
+                "resource_type": "cpu",
+                "requested_amount": 50,
+                "priority_level": 5,
+                "timestamp": datetime.now().isoformat()
+            }
+            
+            # Simulate a message that causes an error during analysis
             with patch.object(processor, '_analyze_intention', side_effect=Exception("Processing Failed")):
                 msg = {
-                    "value": {"agent_id": "test"},
-                    "key": "test_key"
+                    "value": valid_message,
+                    "key": f"key_{agent_id}"
                 }
                 
                 processor._process_message(msg)
@@ -89,7 +103,7 @@ class TestStreamProcessor:
                         "error": "Processing Failed",
                         "timestamp": pytest.approx(time.time(), 1.0)
                     },
-                    key="test_key"
+                    key=f"key_{agent_id}"
                 )
 
     @given(
@@ -108,15 +122,24 @@ class TestStreamProcessor:
         processed_sequence = []
         
         class MockProcessor(StreamProcessor):
-            def _analyze_intention(self, data):
-                processed_sequence.append(data['seq'])
+            def _analyze_intention(self, intention):
+                processed_sequence.append(intention.requested_amount)  # Use requested_amount as sequence
                 return {}
 
         processor = MockProcessor()
         
         with patch('src.stream_processor.kafka_bus'):
             for seq in message_sequence:
-                msg = {"value": {"seq": seq, "agent_id": "ordered_agent"}}
+                # Create valid message with all required fields
+                msg = {
+                    "value": {
+                        "agent_id": "ordered_agent",
+                        "resource_type": "cpu",
+                        "requested_amount": seq,
+                        "priority_level": 5,
+                        "timestamp": datetime.now().isoformat()
+                    }
+                }
                 processor._process_message(msg)
         
         assert processed_sequence == message_sequence

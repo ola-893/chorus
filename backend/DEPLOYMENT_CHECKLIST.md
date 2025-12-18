@@ -36,24 +36,37 @@ Use this checklist to ensure a successful deployment of the observability and tr
   ```bash
   cp .env.example .env  # Development
   cp .env.production .env  # Production
-  cp .env.staging .env  # Staging
+  cp .env.staging .env  # Staging (if available)
   ```
 
 - [ ] **Required environment variables set**:
-  - [ ] `CHORUS_GEMINI_API_KEY`
-  - [ ] `CHORUS_REDIS_HOST`
-  - [ ] `CHORUS_REDIS_PORT`
   - [ ] `CHORUS_ENVIRONMENT` (development/staging/production)
+  - [ ] `CHORUS_GEMINI_API_KEY` (Google Gemini API key)
+  - [ ] `CHORUS_GEMINI_MODEL=gemini-3-pro-preview`
+  - [ ] `CHORUS_REDIS_HOST` (Redis server host)
+  - [ ] `CHORUS_REDIS_PORT=6379`
+  - [ ] `CHORUS_REDIS_PASSWORD` (recommended for production)
+  - [ ] `CHORUS_API_HOST=0.0.0.0`
+  - [ ] `CHORUS_API_PORT=8000`
+
+- [ ] **Production-specific variables**:
+  - [ ] `CHORUS_DEBUG=false`
+  - [ ] `CHORUS_LOG_LEVEL=INFO`
+  - [ ] `CHORUS_LOG_STRUCTURED=true`
+  - [ ] `CHORUS_API_WORKERS=4`
+  - [ ] `CHORUS_REDIS_POOL_SIZE=20`
 
 - [ ] **Optional but recommended variables**:
   - [ ] `CHORUS_DATADOG_ENABLED=true`
   - [ ] `CHORUS_DATADOG_API_KEY`
   - [ ] `CHORUS_DATADOG_APP_KEY`
-  - [ ] `CHORUS_REDIS_PASSWORD`
+  - [ ] `CHORUS_ELEVENLABS_ENABLED=true` (if voice alerts needed)
+  - [ ] `KAFKA_ENABLED=true` (if event streaming needed)
 
 - [ ] **Configuration validation passed**
   ```bash
   python start_system.py validate-config
+  python -m src.config_validator
   ```
 
 ### 🔧 Service Configuration
@@ -104,20 +117,33 @@ Use this checklist to ensure a successful deployment of the observability and tr
 ## Post-Deployment Validation
 
 ### 🏥 Health Checks
-- [ ] **Run deployment validation**
+- [ ] **Run comprehensive deployment validation**
   ```bash
   ./validate-deployment.sh
+  ```
+- [ ] **System health check passed**
+  ```bash
+  python start_system.py health-check
   ```
 - [ ] **Backend API responding**
   ```bash
   curl http://localhost:8000/health
+  curl http://localhost:8000/api/v1/system/health
   ```
 - [ ] **Dashboard accessible**
   - Development: http://localhost:3000
   - Production: http://localhost or https://your-domain.com
 - [ ] **Redis connectivity verified**
   ```bash
-  redis-cli ping
+  redis-cli -h $CHORUS_REDIS_HOST -p $CHORUS_REDIS_PORT ping
+  ```
+- [ ] **Docker health checks (if using Docker)**
+  ```bash
+  ./deploy-docker.sh health
+  ```
+- [ ] **System lifecycle status verified**
+  ```bash
+  python -c "from src.system_lifecycle import get_system_status; print(get_system_status())"
   ```
 
 ### 📊 Functional Testing

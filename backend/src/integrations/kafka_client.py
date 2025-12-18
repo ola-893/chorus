@@ -6,6 +6,7 @@ import logging
 import socket
 from typing import Dict, Any, Optional, Callable, List
 import time
+from collections import deque
 
 try:
     from confluent_kafka import Producer, Consumer, KafkaError, Message, KafkaException
@@ -26,6 +27,7 @@ from ..error_handling import (
     ChorusError
 )
 from ..logging_config import get_agent_logger
+from ..event_bus import event_bus
 
 agent_logger = get_agent_logger(__name__)
 
@@ -52,17 +54,123 @@ class KafkaMessageBus:
         self._producer_config = {}
         self._consumer_config = {}
         
+        # Message buffer for connection failures
+        self.message_buffer = deque(maxlen=settings.kafka.buffer_size)
+        self._is_connected = True
+
+        def on_breaker_state_change(new_state):
+            if new_state == "CLOSED":
+                self._is_connected = True
+                self._replay_buffer()
+            elif new_state == "OPEN":
+                self._is_connected = False
+
         # Define circuit breaker for Kafka operations
         self.circuit_breaker = CircuitBreaker(
             failure_threshold=5,
             recovery_timeout=30.0,
             expected_exception=(KafkaOperationError, Exception),
-            service_name="kafka"
+            service_name="kafka",
+            on_state_change=on_breaker_state_change
         )
         
         if self.enabled and Producer:
             self._initialize_config()
             self._initialize_producer()
+        
+        event_bus.subscribe('circuit_breaker_state_change', self._handle_circuit_breaker_change)
+
+    def _handle_circuit_breaker_change(self, data):
+        """Handle circuit breaker state changes from event bus."""
+        if data.get('service') == 'kafka':
+            if data.get('new_state') == 'CLOSED':
+                self._is_connected = True
+                self._replay_buffer()
+            elif data.get('new_state') == 'OPEN':
+                self._is_connected = False
+    
+    def get_buffer_status(self) -> Dict[str, Any]:
+        """
+        Get current buffer status.
+        
+        Returns:
+            Dictionary with buffer metrics
+        """
+        return {
+            "size": len(self.message_buffer),
+            "max_size": self.message_buffer.maxlen,
+            "utilization": len(self.message_buffer) / self.message_buffer.maxlen if self.message_buffer.maxlen > 0 else 0,
+            "is_full": len(self.message_buffer) == self.message_buffer.maxlen,
+            "is_connected": self._is_connected
+        }
+    
+    def clear_buffer(self) -> int:
+        """
+        Clear the message buffer.
+        
+        Returns:
+            Number of messages cleared
+        """
+        count = len(self.message_buffer)
+        self.message_buffer.clear()
+        agent_logger.log_agent_action(
+            "WARNING", 
+            f"Cleared {count} messages from buffer", 
+            action_type="kafka_buffer_cleared"
+        )
+        return count
+    
+    def _replay_buffer(self):
+        """
+        Replay messages from the buffer when connection is restored.
+        Messages are replayed in FIFO order to preserve ordering.
+        If replay fails, the message is returned to the front of the buffer.
+        """
+        if not self._is_connected or not self.message_buffer:
+            return
+            
+        buffer_size = len(self.message_buffer)
+        agent_logger.log_agent_action(
+            "INFO", 
+            f"Replaying {buffer_size} buffered messages.", 
+            action_type="kafka_replay_start"
+        )
+        
+        replayed_count = 0
+        failed_count = 0
+        
+        while self.message_buffer and self._is_connected:
+            msg = self.message_buffer.popleft()
+            try:
+                self.produce(
+                    msg['topic'], 
+                    msg['value'], 
+                    msg['key'], 
+                    msg['headers'], 
+                    from_buffer=True
+                )
+                replayed_count += 1
+            except Exception as e:
+                agent_logger.log_system_error(
+                    e, 
+                    "kafka_client", 
+                    "_replay_buffer", 
+                    context={
+                        "message": msg,
+                        "replayed": replayed_count,
+                        "remaining": len(self.message_buffer) + 1
+                    }
+                )
+                # If replay fails, put message back at the front and stop
+                self.message_buffer.appendleft(msg)
+                failed_count += 1
+                break
+        
+        agent_logger.log_agent_action(
+            "INFO", 
+            f"Finished replaying buffer. Replayed: {replayed_count}, Failed: {failed_count}, Remaining: {len(self.message_buffer)}", 
+            action_type="kafka_replay_end"
+        )
     
     def _initialize_config(self):
         """Initialize Kafka configuration."""
@@ -78,15 +186,34 @@ class KafkaMessageBus:
                 'sasl.username': self.sasl_username,
                 'sasl.password': self.sasl_password,
             })
-            
-        self._producer_config = base_config.copy()
         
-        self._consumer_config = base_config.copy()
-        self._consumer_config.update({
-            'group.id': 'chorus-backend-group',
-            'auto.offset.reset': 'earliest',
-            'enable.auto.commit': False,  # We will commit manually for reliability
-        })
+        # Use optimized configurations from performance optimizer
+        try:
+            from ..performance_optimizer import kafka_optimizer
+            self._producer_config = kafka_optimizer.get_optimized_producer_config()
+            self._consumer_config = kafka_optimizer.get_optimized_consumer_config('chorus-backend-group')
+        except ImportError:
+            # Fallback to basic configuration
+            self._producer_config = base_config.copy()
+            self._producer_config.update({
+                'compression.type': 'lz4',
+                'linger.ms': 5,
+                'batch.size': 65536,
+                'retries': 10,
+                'delivery.timeout.ms': 120000,
+                'acks': 'all',
+                'enable.idempotence': True
+            })
+            
+            self._consumer_config = base_config.copy()
+            self._consumer_config.update({
+                'group.id': 'chorus-backend-group',
+                'auto.offset.reset': 'earliest',
+                'enable.auto.commit': False,
+                'session.timeout.ms': 30000,
+                'fetch.min.bytes': 50000,
+                'max.poll.records': 1000
+            })
 
     def _initialize_producer(self):
         """Initialize Kafka producer."""
@@ -102,7 +229,7 @@ class KafkaMessageBus:
             self.enabled = False
 
     @retry_with_exponential_backoff(max_retries=3, base_delay=0.1, exceptions=(KafkaOperationError,))
-    def produce(self, topic: str, value: Dict[str, Any], key: Optional[str] = None, headers: Optional[Dict[str, str]] = None) -> None:
+    def produce(self, topic: str, value: Dict[str, Any], key: Optional[str] = None, headers: Optional[Dict[str, str]] = None, from_buffer: bool = False) -> None:
         """
         Produce a message to a Kafka topic.
         
@@ -111,18 +238,43 @@ class KafkaMessageBus:
             value: Message body (will be JSON serialized)
             key: Message key (optional)
             headers: Message headers (optional)
+            from_buffer: Whether the message is from the replay buffer
         """
         if not self.enabled or not self.producer:
-            # If disabled, just log (or could raise error depending on requirement)
-            # For now we log warning to avoid crashing logic that expects it to work if configured off
             if settings.kafka.enabled: 
                 agent_logger.log_agent_action("WARNING", "Kafka producer not available", action_type="kafka_produce_skipped")
+            return
+
+        if not self._is_connected and not from_buffer:
+            # Buffer the message for later replay
+            buffer_full = len(self.message_buffer) == self.message_buffer.maxlen
+            if buffer_full:
+                agent_logger.log_agent_action(
+                    "WARNING", 
+                    f"Kafka message buffer is full ({self.message_buffer.maxlen} messages). Oldest message will be dropped.", 
+                    action_type="kafka_buffer_overflow",
+                    context={"topic": topic}
+                )
+            
+            self.message_buffer.append({
+                'topic': topic, 
+                'value': value, 
+                'key': key, 
+                'headers': headers,
+                'buffered_at': time.time()
+            })
+            
+            if not buffer_full:
+                agent_logger.log_agent_action(
+                    "INFO", 
+                    f"Message buffered for topic {topic}. Buffer size: {len(self.message_buffer)}/{self.message_buffer.maxlen}", 
+                    action_type="kafka_message_buffered"
+                )
             return
 
         @self.circuit_breaker
         def _do_produce():
             try:
-                # Callback for delivery reports
                 def delivery_report(err, msg):
                     if err is not None:
                         agent_logger.log_system_error(
@@ -131,15 +283,9 @@ class KafkaMessageBus:
                             "delivery_report",
                             context={"topic": topic}
                         )
-                    else:
-                        # Success logging (debug level to avoid spam)
-                        pass
 
-                # Serialize value
                 json_value = json.dumps(value).encode('utf-8')
                 encoded_key = key.encode('utf-8') if key else None
-                
-                # Convert headers to list of tuples if present
                 kafka_headers = [(k, v.encode('utf-8')) for k, v in headers.items()] if headers else None
 
                 self.producer.produce(
@@ -150,7 +296,6 @@ class KafkaMessageBus:
                     callback=delivery_report
                 )
                 
-                # Trigger any available delivery report callbacks from previous produce() calls
                 self.producer.poll(0)
                 
             except Exception as e:
@@ -289,6 +434,68 @@ class KafkaMessageBus:
                     pass 
                 else:
                     agent_logger.log_system_error(e, "kafka_client", "create_topics", context={"topic": topic})
+
+    def create_temporary_consumer(self, group_id: Optional[str] = None) -> Optional['Consumer']:
+        """
+        Create a temporary consumer for replay or ad-hoc querying.
+        
+        Args:
+            group_id: Consumer group ID (optional, defaults to random)
+            
+        Returns:
+            Configured Consumer instance or None if Kafka is disabled
+        """
+        if not self.enabled or not Consumer:
+            return None
+            
+        config = self._consumer_config.copy()
+        config['group.id'] = group_id or f"chorus-replay-{int(time.time()*1000)}"
+        config['auto.offset.reset'] = 'earliest'
+        config['enable.auto.commit'] = False
+        
+        try:
+            return Consumer(config)
+        except Exception as e:
+            agent_logger.log_system_error(e, "kafka_client", "create_temporary_consumer")
+            return None
+
+    def get_topic_offsets_for_time(self, consumer: 'Consumer', topic: str, timestamp: int) -> Dict[Any, Any]:
+        """
+        Get offsets for a specific timestamp for all partitions of a topic.
+        
+        Args:
+            consumer: Consumer instance to use
+            topic: Topic name
+            timestamp: Timestamp in milliseconds
+            
+        Returns:
+            Dictionary of TopicPartition -> Offset
+        """
+        try:
+            # Get metadata to find partitions
+            metadata = consumer.list_topics(topic)
+            if topic not in metadata.topics:
+                return {}
+                
+            partitions = [
+                (topic, p) 
+                for p in metadata.topics[topic].partitions.keys()
+            ]
+            
+            # Build TopicPartitions with timestamp
+            from confluent_kafka import TopicPartition
+            timestamps = [
+                TopicPartition(topic, p, timestamp) 
+                for topic, p in partitions
+            ]
+            
+            # Look up offsets
+            offsets = consumer.offsets_for_times(timestamps)
+            return offsets
+            
+        except Exception as e:
+            agent_logger.log_system_error(e, "kafka_client", "get_topic_offsets_for_time")
+            return {}
 
 # Global instance
 kafka_bus = KafkaMessageBus()

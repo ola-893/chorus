@@ -131,8 +131,8 @@ class TestComprehensiveLogging:
         
         try:
             # Create agent network and perform actions
-            network = AgentNetwork(min_agents=len(agent_actions), max_agents=len(agent_actions))
-            agents = network.create_agents(len(agent_actions))
+            network = AgentNetwork(agent_count=len(agent_actions))
+            agents = network.create_agents()
             
             # Perform various agent actions
             for i, (agent_id, action_type, resource_type, amount) in enumerate(agent_actions):

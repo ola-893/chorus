@@ -103,6 +103,7 @@ class EquilibriumSolution:
     payoffs: Dict[str, float]
     stability_score: float
     timestamp: datetime
+    equilibrium_type: Optional[str] = None
 
 
 @dataclass

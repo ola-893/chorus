@@ -90,7 +90,10 @@ class ElevenLabsSettings(BaseSettings):
     """ElevenLabs configuration."""
     api_key: Optional[str] = Field(default=None, description="ElevenLabs API key")
     voice_id: str = Field(default="21m00Tcm4TlvDq8ikWAM", description="Default voice ID")
+    model_id: str = Field(default="eleven_turbo_v2", description="Model ID for generation")
     enabled: bool = Field(default=False, description="Enable ElevenLabs integration")
+    audio_storage_path: str = Field(default="./backend/alerts", description="Path to store audio files")
+    max_audio_age_days: int = Field(default=1, description="Max age of audio files in days")
     
     @model_validator(mode='after')
     def validate_elevenlabs_config(self):
@@ -107,11 +110,21 @@ class KafkaSettings(BaseSettings):
     sasl_username: Optional[str] = Field(default=None, description="SASL username")
     sasl_password: Optional[str] = Field(default=None, description="SASL password")
     enabled: bool = Field(default=False, description="Enable Kafka integration")
+    buffer_size: int = Field(default=1000, description="Message buffer size for reconnections")
+    
+    @field_validator('buffer_size')
+    @classmethod
+    def validate_buffer_size(cls, v):
+        if not isinstance(v, int) or v < 0:
+            raise ValueError("buffer_size must be a non-negative integer")
+        return v
     
     # Topic configuration
     agent_messages_topic: str = Field(default="agent-messages-raw")
     agent_decisions_topic: str = Field(default="agent-decisions-processed")
     system_alerts_topic: str = Field(default="system-alerts")
+    causal_graph_updates_topic: str = Field(default="causal-graph-updates")
+    analytics_metrics_topic: str = Field(default="analytics-metrics")
 
 
 class AgentSimulationSettings(BaseSettings):
@@ -184,6 +197,13 @@ class HealthCheckSettings(BaseSettings):
     max_failures: int = Field(default=3, description="Maximum consecutive failures before marking as failed")
 
 
+class DemoSettings(BaseSettings):
+    """Demo configuration."""
+    mode_enabled: bool = Field(default=False, description="Enable demo mode")
+    audience: str = Field(default="technical", description="Target audience for demo (technical/business)")
+    scenario: Optional[str] = Field(default=None, description="Active demo scenario")
+
+
 class Settings(BaseSettings):
     model_config = {
         'env_file': '.env',
@@ -208,6 +228,7 @@ class Settings(BaseSettings):
     conflict_prediction: ConflictPredictionSettings = Field(default_factory=ConflictPredictionSettings)
     logging: LoggingSettings = Field(default_factory=LoggingSettings)
     health_check: HealthCheckSettings = Field(default_factory=HealthCheckSettings)
+    demo: DemoSettings = Field(default_factory=DemoSettings)
     
     # API Configuration
     api_host: str = Field(default="0.0.0.0", description="API host")
@@ -349,6 +370,27 @@ def validate_configuration(settings: Settings) -> List[str]:
     # Check agent simulation configuration
     if settings.agent_simulation.min_agents > settings.agent_simulation.max_agents:
         issues.append("Minimum agents cannot be greater than maximum agents")
+
+    # Check Kafka configuration for Confluent Cloud
+    if settings.kafka.enabled:
+        if "confluent" in settings.kafka.bootstrap_servers and not (settings.kafka.sasl_username and settings.kafka.sasl_password):
+            issues.append("SASL credentials required for Confluent Cloud")
+        if settings.kafka.security_protocol == "SASL_SSL" and not settings.kafka.sasl_mechanism:
+            issues.append("SASL mechanism required when security protocol is SASL_SSL")
+        
+        # Production readiness checks
+        if settings.is_production():
+            if settings.kafka.security_protocol != "SASL_SSL":
+                issues.append("Production deployments should use SASL_SSL for Kafka")
+            if settings.kafka.buffer_size < 1000:
+                issues.append("Kafka buffer size should be at least 1000 for production")
+    
+    # Performance optimization checks
+    if settings.is_production():
+        if settings.agent_simulation.max_agents > 100:
+            issues.append("Consider horizontal scaling for >100 agents in production")
+        if settings.trust_scoring.quarantine_threshold < 10:
+            issues.append("Quarantine threshold may be too aggressive for production")
     
     return issues
 

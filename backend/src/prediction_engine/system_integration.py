@@ -4,10 +4,15 @@ System integration module for connecting all components of the agent conflict pr
 import logging
 from typing import Optional
 
-from .simulator import AgentNetwork
-from .intervention_engine import intervention_engine
-from .quarantine_manager import quarantine_manager
-from .trust_manager import trust_manager
+from src.prediction_engine.simulator import AgentNetwork
+from src.prediction_engine.intervention_engine import intervention_engine
+from src.prediction_engine.trust_manager import trust_manager
+from src.prediction_engine.quarantine_manager import quarantine_manager
+from src.prediction_engine.alert_classification import severity_classifier
+from src.prediction_engine.alert_delivery_engine import alert_delivery_engine
+from src.system_health import SystemHealthMonitor
+from src.integrations.alerting_integration import AlertingIntegrationService
+from src.logging_config import agent_logger
 from ..config import settings
 from ..logging_config import get_agent_logger
 from ..system_health import health_monitor
@@ -26,59 +31,32 @@ class ConflictPredictorSystem:
     """
     
     def __init__(self):
-        """Initialize the complete system with all components."""
-        # Initialize core components
-        self.trust_manager = trust_manager
-        self.quarantine_manager = quarantine_manager
-        self.intervention_engine = intervention_engine
+        self.agent_network = AgentNetwork()
+        self.system_running = False
+        self.health_monitor = SystemHealthMonitor()
+        self.alert_service = AlertingIntegrationService()
         
-        # Initialize agent network with quarantine manager integration
-        self.agent_network = AgentNetwork(
-            min_agents=settings.agent_simulation.min_agents,
-            max_agents=settings.agent_simulation.max_agents,
-            quarantine_manager=self.quarantine_manager
-        )
+        # Initialize quarantine and intervention components
+        from .quarantine_manager import RedisQuarantineManager
+        from .intervention_engine import ConflictInterventionEngine
+        self.quarantine_manager = RedisQuarantineManager()
+        self.intervention_engine = ConflictInterventionEngine()
         
-        # Connect intervention engine with quarantine manager
-        self.intervention_engine.set_quarantine_manager(self.quarantine_manager)
-        
-        logger.info("Conflict predictor system initialized")
+        agent_logger.log_agent_action(level='info', action_type='system_init', message='Conflict predictor system initialized')
     
-    def start_system(self, agent_count: Optional[int] = None) -> None:
-        """
-        Start the complete system.
-        
-        Args:
-            agent_count: Number of agents to create (optional, uses random if None)
-        """
-        with system_recovery_context(
-            component="system_integration",
-            operation="start_system",
-            fallback_action=self._emergency_shutdown
-        ):
-            agent_logger.log_agent_action(
-                "INFO",
-                "Starting conflict predictor system",
-                action_type="system_startup",
-                context={"agent_count": agent_count}
-            )
-            
-            # Start health monitoring first
-            health_monitor.start_monitoring()
-            
-            # Create and start agents
-            if agent_count:
-                self.agent_network.create_agents(agent_count)
-            
-            # Start agent simulation
-            self.agent_network.start_simulation()
-            
-            agent_logger.log_agent_action(
-                "INFO",
-                "Conflict predictor system started successfully",
-                action_type="system_started",
-                context={"active_agents": len(self.agent_network.agents)}
-            )
+    @system_recovery_context("system_integration", "start_system")
+    def start_system(self, agent_count: int = 5):
+        agent_logger.log_agent_action(level='info', action_type='system_startup', context={'agent_count': agent_count}, message='Starting conflict predictor system')
+        self.agent_network = AgentNetwork(agent_count=agent_count)
+        self.agent_network.create_agents()
+        self.agent_network.start_simulation()
+
+        self.health_monitor.start_monitoring()
+
+        self.alert_service.start_monitoring()
+
+        agent_logger.log_agent_action(level='info', action_type='system_started', context={'active_agents': len(self.agent_network.get_active_agents())}, message='Conflict predictor system started successfully')
+        self.system_running = True
     
     def stop_system(self) -> None:
         """Stop the complete system."""
@@ -87,10 +65,23 @@ class ConflictPredictorSystem:
             operation="stop_system"
         ):
             agent_logger.log_agent_action(
-                "INFO",
-                "Stopping conflict predictor system",
+                level="INFO",
+                message="Stopping conflict predictor system",
                 action_type="system_shutdown"
             )
+            
+            # Stop alerting monitoring
+            import asyncio
+            try:
+                from ..integrations.alerting_integration import alerting_integration
+                loop = asyncio.get_event_loop()
+                loop.create_task(alerting_integration.stop_monitoring())
+                logger.info("Alerting monitoring stopped")
+            except Exception as e:
+                logger.warning(f"Failed to stop alerting monitoring: {e}")
+            
+            # Stop Alert Delivery Engine
+            alert_delivery_engine.stop()
             
             # Stop health monitoring
             health_monitor.stop_monitoring()
@@ -98,9 +89,10 @@ class ConflictPredictorSystem:
             # Stop agent simulation
             self.agent_network.stop_simulation()
             
+            self.system_running = False
             agent_logger.log_agent_action(
-                "INFO",
-                "Conflict predictor system stopped successfully",
+                level="INFO",
+                message="Conflict predictor system stopped successfully",
                 action_type="system_stopped"
             )
     
@@ -145,7 +137,7 @@ class ConflictPredictorSystem:
             quarantined_agents = self.quarantine_manager.get_quarantined_agents()
             
             return {
-                "system_running": self.agent_network.is_running,
+                "system_running": self.system_running,
                 "total_agents": len(self.agent_network.agents),
                 "active_agents": len(active_agents),
                 "quarantined_agents": len(quarantined_agents),

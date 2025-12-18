@@ -1,4 +1,0 @@
-# file: /Users/ola/Documents/hackerthons/chorus/backend/src/prediction_engine/gemini_client.py
-# hypothesis_version: 6.148.7
-
-['generate_content', 'models', 'text']
