@@ -8,6 +8,12 @@
 !.dockerignore
 
 # ============================================================================
+# Validation and Test Results
+# ============================================================================
+test_results.json
+validation_results.json
+
+# ============================================================================
 # Python
 # ============================================================================
 __pycache__/
@@ -432,6 +438,3 @@ id_ed25519.pub
 # GPG keys
 *.gpg
 *.asc
-# Validation and Test Results
-test_results.json
-validation_results.json
