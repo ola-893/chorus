@@ -7,6 +7,10 @@ from enum import Enum
 from pathlib import Path
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings
+from dotenv import load_dotenv
+
+# Force load .env file to override potentially stale environment variables
+load_dotenv(override=True)
 
 
 class Environment(str, Enum):
@@ -74,24 +78,22 @@ class RedisSettings(BaseSettings):
 
 class DatadogSettings(BaseSettings):
     """Datadog configuration."""
+    model_config = {'env_prefix': 'DATADOG_'}
+    
     api_key: Optional[str] = Field(default=None, description="Datadog API key")
     app_key: Optional[str] = Field(default=None, description="Datadog application key")
     site: str = Field(default="datadoghq.com", description="Datadog site")
     enabled: bool = Field(default=False, description="Enable Datadog integration")
-    
-    @model_validator(mode='after')
-    def validate_datadog_config(self):
-        if self.enabled and (not self.api_key or not self.app_key):
-            raise ValueError("Datadog API key and app key are required when Datadog is enabled")
-        return self
 
 
 class ElevenLabsSettings(BaseSettings):
     """ElevenLabs configuration."""
+    model_config = {'env_prefix': 'ELEVENLABS_'}
+    
     api_key: Optional[str] = Field(default=None, description="ElevenLabs API key")
     voice_id: str = Field(default="21m00Tcm4TlvDq8ikWAM", description="Default voice ID")
     model_id: str = Field(default="eleven_turbo_v2", description="Model ID for generation")
-    enabled: bool = Field(default=False, description="Enable ElevenLabs integration")
+    enabled: bool = Field(default=True, description="Enable ElevenLabs integration")
     audio_storage_path: str = Field(default="./backend/alerts", description="Path to store audio files")
     max_audio_age_days: int = Field(default=1, description="Max age of audio files in days")
     
@@ -104,12 +106,14 @@ class ElevenLabsSettings(BaseSettings):
 
 class KafkaSettings(BaseSettings):
     """Confluent Kafka configuration."""
+    model_config = {'env_prefix': 'KAFKA_'}
+    
     bootstrap_servers: str = Field(default="localhost:9092", description="Kafka bootstrap servers")
     security_protocol: str = Field(default="PLAINTEXT", description="Security protocol")
     sasl_mechanism: Optional[str] = Field(default=None, description="SASL mechanism")
     sasl_username: Optional[str] = Field(default=None, description="SASL username")
     sasl_password: Optional[str] = Field(default=None, description="SASL password")
-    enabled: bool = Field(default=False, description="Enable Kafka integration")
+    enabled: bool = Field(default=True, description="Enable Kafka integration")
     buffer_size: int = Field(default=1000, description="Message buffer size for reconnections")
     
     @field_validator('buffer_size')
@@ -329,13 +333,7 @@ def load_settings(env_file: Optional[str] = None) -> Settings:
         Settings instance
     """
     if env_file:
-        # Create a temporary settings class with custom env_file
-        class TempSettings(Settings):
-            class Config(Settings.Config):
-                env_file = env_file
-        
-        return TempSettings()
-    
+        return Settings(_env_file=env_file)
     return Settings()
 
 

@@ -248,6 +248,14 @@ class StreamProcessor:
         """
         Analyze intention using Gemini and Pattern Detector.
         """
+        # 0. Update Interaction Graph (for Loop Detection)
+        if intention.resource_type.startswith("agent_attention:"):
+            try:
+                target_agent_id = intention.resource_type.split(":", 1)[1]
+                pattern_detector.record_interaction(intention.agent_id, target_agent_id)
+            except IndexError:
+                pass
+
         # 1. Update and Get History for Pattern Detection
         self._update_agent_history(intention)
         history = self._get_agent_history(intention.agent_id)

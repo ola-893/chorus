@@ -18,6 +18,7 @@ from ..logging_config import get_agent_logger
 from ..error_handling import isolate_agent_errors, system_recovery_context
 from ..integrations.kafka_client import kafka_bus
 from ..config import settings
+from ..mapper.topology_manager import topology_manager
 import json
 
 logger = logging.getLogger(__name__)
@@ -48,8 +49,8 @@ class SimulatedAgent(AgentInterface):
         self.message_queue = Queue()
         
         # Request timing configuration
-        self.request_interval_min = 0.5  # Minimum seconds between requests
-        self.request_interval_max = 2.0  # Maximum seconds between requests
+        self.request_interval_min = 8.0  # Increased from 5.0
+        self.request_interval_max = 20.0  # Increased from 15.0
         
         # Resource request configuration
         self.max_resource_amount = 100  # Maximum amount to request for any resource
@@ -194,6 +195,17 @@ class SimulatedAgent(AgentInterface):
         
         # Send message through the network
         target_agent.message_queue.put(message)
+        
+        # Update topology
+        try:
+            topology_manager.add_interaction(
+                source=self.agent_id,
+                target=target_agent.agent_id,
+                interaction_type="status_update"
+            )
+        except Exception as e:
+            logger.error(f"Failed to update topology (status): {e}")
+            
         logger.debug(f"Agent {self.agent_id} sent status update to {target_agent.agent_id}")
     
     @isolate_agent_errors
@@ -209,6 +221,17 @@ class SimulatedAgent(AgentInterface):
         
         if self.resource_manager:
             result = self.resource_manager.process_request(request)
+            
+            # Update topology
+            try:
+                topology_manager.add_interaction(
+                    source=self.agent_id,
+                    target=f"resource_{resource_type}",
+                    interaction_type="resource_request"
+                )
+            except Exception as e:
+                logger.error(f"Failed to update topology (resource): {e}")
+
             agent_logger.log_agent_action(
                 "INFO",
                 f"Resource request processed",

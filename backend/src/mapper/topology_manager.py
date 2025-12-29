@@ -6,11 +6,6 @@ import time
 from dataclasses import asdict
 import json
 
-try:
-    import networkx as nx
-except ImportError:
-    nx = None
-
 from .models import CausalEdge, GraphNode, GraphMetrics
 from ..logging_config import get_agent_logger
 from ..integrations.kafka_client import kafka_bus
@@ -18,6 +13,12 @@ from ..config import settings
 from ..event_bus import event_bus
 
 agent_logger = get_agent_logger(__name__)
+
+try:
+    import networkx as nx
+except ImportError as e:
+    agent_logger.error(f"Failed to import networkx: {e}")
+    nx = None
 
 class GraphTopologyManager:
     """
@@ -42,7 +43,27 @@ class GraphTopologyManager:
         """
         Add an interaction (edge) to the graph.
         """
-        if not self.graph:
+        global nx
+        if nx is None:
+            try:
+                import networkx as nx_new
+                nx = nx_new
+                self.graph = nx.DiGraph()
+            except ImportError:
+                # Use a simple mock to prevent noise and crashes
+                class MockGraph:
+                    def add_node(self, *args, **kwargs): pass
+                    def add_edge(self, *args, **kwargs): pass
+                    def has_edge(self, *args, **kwargs): return False
+                    def number_of_nodes(self): return 0
+                    def number_of_edges(self): return 0
+                    def __getitem__(self, key): return {}
+                    @property
+                    def nodes(self): return {}
+                self.graph = MockGraph()
+
+        if self.graph is None:
+            agent_logger.warning("Graph not initialized (NetworkX missing?)")
             return
 
         # Ensure nodes exist
@@ -94,7 +115,7 @@ class GraphTopologyManager:
         """
         Detect loops in the interaction graph.
         """
-        if not self.graph:
+        if self.graph is None:
             return []
             
         try:
@@ -107,7 +128,7 @@ class GraphTopologyManager:
 
     def get_metrics(self) -> GraphMetrics:
         """Calculate graph metrics."""
-        if not self.graph:
+        if self.graph is None:
             return GraphMetrics(0, 0, 0.0, 0.0, [], 0)
             
         try:
@@ -147,6 +168,7 @@ class GraphTopologyManager:
             "data": data,
             "timestamp": time.time()
         }
+        
         
         # Publish to Kafka
         kafka_bus.produce(

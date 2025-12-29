@@ -202,7 +202,7 @@ class KafkaMessageBus:
                 'retries': 10,
                 'delivery.timeout.ms': 120000,
                 'acks': 'all',
-                'enable.idempotence': True
+                'enable.idempotence': False
             })
             
             self._consumer_config = base_config.copy()
@@ -211,8 +211,7 @@ class KafkaMessageBus:
                 'auto.offset.reset': 'earliest',
                 'enable.auto.commit': False,
                 'session.timeout.ms': 30000,
-                'fetch.min.bytes': 50000,
-                'max.poll.records': 1000
+                'fetch.min.bytes': 50000
             })
 
     def _initialize_producer(self):
@@ -282,6 +281,13 @@ class KafkaMessageBus:
                             "kafka_client", 
                             "delivery_report",
                             context={"topic": topic}
+                        )
+                    else:
+                        agent_logger.log_agent_action(
+                            "INFO",
+                            f"Kafka message delivered to {msg.topic()} [{msg.partition()}] at offset {msg.offset()}",
+                            action_type="kafka_delivery_success",
+                            context={"topic": msg.topic(), "partition": msg.partition(), "offset": msg.offset()}
                         )
 
                 json_value = json.dumps(value).encode('utf-8')

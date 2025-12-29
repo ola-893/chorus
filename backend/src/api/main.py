@@ -2,7 +2,7 @@
 FastAPI application for the Chorus Agent Conflict Predictor.
 """
 from typing import Dict, Any, Optional, List
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import asyncio
 import json
 from contextlib import asynccontextmanager
@@ -12,6 +12,7 @@ try:
     from fastapi.security import APIKeyHeader
     from fastapi.responses import JSONResponse
     from fastapi.staticfiles import StaticFiles
+    from fastapi.middleware.cors import CORSMiddleware
     from pydantic import BaseModel
     FASTAPI_AVAILABLE = True
 except ImportError:
@@ -48,6 +49,7 @@ from .demo_router import router as demo_router
 from .voice_analytics_router import router as analytics_router
 from .impact_router import router as impact_router
 from .events_router import router as events_router
+from .universal_router import router as universal_router
 
 agent_logger = get_agent_logger(__name__)
 
@@ -208,11 +210,15 @@ if FASTAPI_AVAILABLE:
             self.active_connections.remove(websocket)
 
         async def broadcast(self, message: str):
-            for connection in self.active_connections:
+            # Iterate over a copy to allow modification during iteration
+            for connection in self.active_connections[:]:
                 try:
                     await connection.send_text(message)
                 except Exception as e:
-                    agent_logger.log_system_error(e, "api", "broadcast")
+                    # If sending fails, assume connection is dead and remove it
+                    # agent_logger.log_system_error(e, "api", "broadcast_send_failed")
+                    if connection in self.active_connections:
+                        self.active_connections.remove(connection)
 else:
     class ConnectionManager:
         """Fallback connection manager when FastAPI is not available."""
@@ -252,12 +258,22 @@ def create_app(lifecycle_manager: SystemLifecycleManager) -> FastAPI:
         version="0.1.0"
     )
     
+    # Configure CORS
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["http://localhost:3000"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+    
     # Include routers
     app.include_router(voice_router)
     app.include_router(demo_router)
     app.include_router(analytics_router)
     app.include_router(impact_router)
     app.include_router(events_router)
+    app.include_router(universal_router)
     
     # Mount alerts directory for audio playback
     import os
@@ -466,13 +482,28 @@ def create_app(lifecycle_manager: SystemLifecycleManager) -> FastAPI:
                 history = trust_manager.get_agent_history(agent_id)
                 last_entry = history[-1] if history else None
                 
-                all_agents.append({
+                # Fetch extended state from Redis
+                agent_state = None
+                if redis_client:
+                    try:
+                        agent_state = redis_client.get_json(f"agent_state:{agent_id}")
+                    except Exception:
+                        pass # Ignore Redis errors for extended state
+                
+                agent_data = {
                     "id": agent_id,
                     "trust_score": score,
                     "status": "quarantined" if score < 30 else "active",
                     "last_updated": last_entry.get('timestamp') if last_entry else datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
                     "history_length": len(history)
-                })
+                }
+                
+                if agent_state:
+                    agent_data["riskLevel"] = agent_state.get("risk_level")
+                    agent_data["activityLevel"] = agent_state.get("activity_level")
+                    agent_data["resourceUsage"] = agent_state.get("resource_usage")
+                
+                all_agents.append(agent_data)
             
             return {
                 "agents": all_agents,
@@ -491,14 +522,37 @@ def create_app(lifecycle_manager: SystemLifecycleManager) -> FastAPI:
         Get aggregated metrics for the dashboard.
         """
         # In a real scenario, this would aggregate data from Datadog or Redis
-        # For now, we return system status and trust summary
         status = lifecycle_manager.get_status()
+        
+        # Get active agents from trust manager
+        active_agents_count = 0
+        if trust_manager:
+            try:
+                agent_ids = trust_manager.get_all_agent_ids() if hasattr(trust_manager, 'get_all_agent_ids') else []
+                for aid in agent_ids:
+                    if trust_manager.get_trust_score(aid) >= 30:
+                        active_agents_count += 1
+            except Exception:
+                pass
+
+        # Get conflicts detected from event log buffer
+        from ..event_sourcing import event_log_manager
+        conflicts_count = 0
+        try:
+            # Count conflict_prediction events in the decision topic buffer
+            for event in event_log_manager._buffer:
+                if event["topic"] == event_log_manager.decision_topic:
+                    val = event.get("value", {})
+                    if val.get("type") == "conflict_prediction":
+                        conflicts_count += 1
+        except Exception:
+            pass
         
         return {
             "system_health": status.get("is_healthy", False),
             "uptime": status.get("uptime", 0),
-            "active_agents": 0, # TODO: Connect to simulation manager
-            "conflicts_detected": 0, # TODO: Connect to prediction engine stats
+            "active_agents": active_agents_count,
+            "conflicts_detected": conflicts_count,
             "timestamp": datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
         }
 
@@ -515,15 +569,15 @@ def create_app(lifecycle_manager: SystemLifecycleManager) -> FastAPI:
                     "service_name": "gemini_api",
                     "state": gemini_circuit_breaker.state,
                     "failure_count": gemini_circuit_breaker.failure_count,
-                    "last_failure_time": gemini_circuit_breaker.last_failure_time.isoformat() + "Z" if gemini_circuit_breaker.last_failure_time else None,
-                    "next_attempt_time": gemini_circuit_breaker.next_attempt_time.isoformat() + "Z" if gemini_circuit_breaker.next_attempt_time else None
+                    "last_failure_time": datetime.fromtimestamp(gemini_circuit_breaker.last_failure_time, timezone.utc).isoformat().replace('+00:00', 'Z') if gemini_circuit_breaker.last_failure_time else None,
+                    "next_attempt_time": (datetime.fromtimestamp(gemini_circuit_breaker.last_failure_time, timezone.utc) + timedelta(seconds=gemini_circuit_breaker.recovery_timeout)).isoformat().replace('+00:00', 'Z') if gemini_circuit_breaker.last_failure_time else None
                 },
                 {
                     "service_name": "redis",
                     "state": redis_circuit_breaker.state,
                     "failure_count": redis_circuit_breaker.failure_count,
-                    "last_failure_time": redis_circuit_breaker.last_failure_time.isoformat() + "Z" if redis_circuit_breaker.last_failure_time else None,
-                    "next_attempt_time": redis_circuit_breaker.next_attempt_time.isoformat() + "Z" if redis_circuit_breaker.next_attempt_time else None
+                    "last_failure_time": datetime.fromtimestamp(redis_circuit_breaker.last_failure_time, timezone.utc).isoformat().replace('+00:00', 'Z') if redis_circuit_breaker.last_failure_time else None,
+                    "next_attempt_time": (datetime.fromtimestamp(redis_circuit_breaker.last_failure_time, timezone.utc) + timedelta(seconds=redis_circuit_breaker.recovery_timeout)).isoformat().replace('+00:00', 'Z') if redis_circuit_breaker.last_failure_time else None
                 }
             ]
             
@@ -637,15 +691,15 @@ def create_app(lifecycle_manager: SystemLifecycleManager) -> FastAPI:
                         "service_name": "gemini_api",
                         "state": gemini_circuit_breaker.state,
                         "failure_count": gemini_circuit_breaker.failure_count,
-                        "last_failure_time": gemini_circuit_breaker.last_failure_time.isoformat() + "Z" if gemini_circuit_breaker.last_failure_time else None,
-                        "next_attempt_time": gemini_circuit_breaker.next_attempt_time.isoformat() + "Z" if gemini_circuit_breaker.next_attempt_time else None
+                        "last_failure_time": datetime.fromtimestamp(gemini_circuit_breaker.last_failure_time, timezone.utc).isoformat().replace('+00:00', 'Z') if gemini_circuit_breaker.last_failure_time else None,
+                        "next_attempt_time": (datetime.fromtimestamp(gemini_circuit_breaker.last_failure_time, timezone.utc) + timedelta(seconds=gemini_circuit_breaker.recovery_timeout)).isoformat().replace('+00:00', 'Z') if gemini_circuit_breaker.last_failure_time else None
                     },
                     {
                         "service_name": "redis",
                         "state": redis_circuit_breaker.state,
                         "failure_count": redis_circuit_breaker.failure_count,
-                        "last_failure_time": redis_circuit_breaker.last_failure_time.isoformat() + "Z" if redis_circuit_breaker.last_failure_time else None,
-                        "next_attempt_time": redis_circuit_breaker.next_attempt_time.isoformat() + "Z" if redis_circuit_breaker.next_attempt_time else None
+                        "last_failure_time": datetime.fromtimestamp(redis_circuit_breaker.last_failure_time, timezone.utc).isoformat().replace('+00:00', 'Z') if redis_circuit_breaker.last_failure_time else None,
+                        "next_attempt_time": (datetime.fromtimestamp(redis_circuit_breaker.last_failure_time, timezone.utc) + timedelta(seconds=redis_circuit_breaker.recovery_timeout)).isoformat().replace('+00:00', 'Z') if redis_circuit_breaker.last_failure_time else None
                     }
                 ]
                 
@@ -693,11 +747,21 @@ def create_app(lifecycle_manager: SystemLifecycleManager) -> FastAPI:
     @app.on_event("startup")
     async def startup_event():
         """Handle application startup."""
+        # Set main loop for event bus to handle background thread publishing
+        event_bus.set_main_loop(asyncio.get_running_loop())
+        
         agent_logger.log_agent_action(
             "INFO",
-            "FastAPI application started",
+            "FastAPI application starting...",
             action_type="api_startup"
         )
+        
+        # Initialize the system lifecycle (starts stream processor, event bridge, etc.)
+        try:
+            # We run this in a thread if it's blocking, but it mostly starts background threads
+            lifecycle_manager.startup()
+        except Exception as e:
+            agent_logger.log_system_error(e, "api", "lifecycle_startup")
         
         # Cleanup old voice files
         try:
@@ -706,68 +770,111 @@ def create_app(lifecycle_manager: SystemLifecycleManager) -> FastAPI:
         except Exception:
             pass
         
-        # Start Kafka Event Bridge
-        try:
-            from ..event_bridge import kafka_event_bridge
-            kafka_event_bridge.start()
-        except ImportError:
-            logger.warning("Could not import KafkaEventBridge")
-        except Exception as e:
-            logger.warning(f"Failed to start KafkaEventBridge: {e}")
+        # Hook up event logging for historical queries
+        from ..event_sourcing import event_log_manager
+        
+        async def log_msg_event(data):
+            event_log_manager._record_event(event_log_manager.msg_topic, data)
+            
+        async def log_decision_event(data):
+            event_log_manager._record_event(event_log_manager.decision_topic, data)
+
+        event_bus.subscribe("trust_score_update", log_msg_event)
+        event_bus.subscribe("conflict_prediction", log_decision_event)
+        event_bus.subscribe("decision_update", log_decision_event)
+        event_bus.subscribe("agent_quarantined", log_decision_event)
+        event_bus.subscribe("intervention_executed", log_decision_event)
         
         # Subscribe to event bus
-        async def broadcast_event(data):
-            try:
-                # data should be a dict with 'type' and 'payload'
-                message = json.dumps(data, default=str)
-                await manager.broadcast(message)
-            except Exception as e:
-                agent_logger.log_system_error(e, "api", "broadcast_event")
+        def create_broadcast_handler(event_type):
+            async def broadcast_event(data):
+                try:
+                    # Always wrap in the format the frontend expects: {type, data, timestamp}
+                    # even if the data already contains a type field
+                    payload = {
+                        "type": event_type,
+                        "data": data,
+                        "timestamp": datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+                    }
+                        
+                    message = json.dumps(payload, default=str)
+                    await manager.broadcast(message)
+                except Exception as e:
+                    agent_logger.log_system_error(e, "api", f"broadcast_{event_type}")
+            return broadcast_event
 
-        event_bus.subscribe("trust_score_update", broadcast_event)
-        event_bus.subscribe("conflict_prediction", broadcast_event)
-        event_bus.subscribe("system_health", broadcast_event)
-        event_bus.subscribe("intervention_executed", broadcast_event)
-        event_bus.subscribe("circuit_breaker_state_change", broadcast_event)
-        event_bus.subscribe("voice_alert_generated", broadcast_event)
-        event_bus.subscribe("voice_analytics_update", broadcast_event)
+        event_bus.subscribe("trust_score_update", create_broadcast_handler("trust_score_update"))
+        event_bus.subscribe("agent_activity", create_broadcast_handler("agent_activity"))
+        event_bus.subscribe("conflict_prediction", create_broadcast_handler("conflict_prediction"))
+        event_bus.subscribe("system_health", create_broadcast_handler("system_health"))
+        event_bus.subscribe("intervention_executed", create_broadcast_handler("intervention_executed"))
+        event_bus.subscribe("circuit_breaker_state_change", create_broadcast_handler("circuit_breaker_state_change"))
+        event_bus.subscribe("voice_alert_generated", create_broadcast_handler("voice_alert_generated"))
+        event_bus.subscribe("voice_analytics_update", create_broadcast_handler("voice_analytics_update"))
+        event_bus.subscribe("graph_update", create_broadcast_handler("graph_update"))
+        event_bus.subscribe("system_alert", create_broadcast_handler("system_alert"))
+        
+        # Handle quarantine events and convert to frontend format
+        async def broadcast_quarantine_event(data):
+            try:
+                quarantine_message = {
+                    "type": "quarantine_event",
+                    "data": {
+                        "agent_id": data.get("agent_id"),
+                        "action": "quarantine",
+                        "reason": data.get("reason"),
+                        "timestamp": data.get("timestamp", datetime.now(timezone.utc).isoformat())
+                    },
+                    "timestamp": data.get("timestamp", datetime.now(timezone.utc).isoformat())
+                }
+                await manager.broadcast(json.dumps(quarantine_message, default=str))
+            except Exception as e:
+                agent_logger.log_system_error(e, "api", "broadcast_quarantine_event")
+        
+        event_bus.subscribe("agent_quarantined", broadcast_quarantine_event)
 
         # Handle decision updates (pattern detection)
         async def broadcast_decision_update(data):
-            # Check if patterns were detected
-            patterns = data.get("patterns_detected", [])
-            pattern_details = data.get("pattern_details", {})
-            
-            if patterns:
-                # Broadcast distinct alert for each pattern type
-                for pattern in patterns:
-                    details = pattern_details.get(pattern, {})
-                    
-                    # Determine severity
-                    severity = details.get("severity", "info")
-                    if pattern == "BYZANTINE_BEHAVIOR":
-                        severity = "critical"
-                    elif pattern == "RESOURCE_HOARDING":
-                        severity = "warning"
-                    elif pattern == "ROUTING_LOOP":
-                        severity = "critical"
-                    
-                    pattern_alert = {
-                        "type": "pattern_alert",
-                        "data": {
-                            "agent_id": data.get("agent_id"),
-                            "patterns": [pattern],
-                            "timestamp": datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
-                            "severity": severity,
-                            "type": details.get("type", pattern.lower()),
-                            "details": details.get("details", f"Pattern {pattern} detected for agent {data.get('agent_id')}"),
-                            "recommended_action": details.get("recommended_action", "Review agent behavior and consider intervention"),
-                            "affected_agents": details.get("affected_agents", [data.get("agent_id")]),
-                            "risk_score": data.get("risk_score", 0.5)
-                        },
-                        "timestamp": datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
-                    }
-                    await manager.broadcast(json.dumps(pattern_alert, default=str))
+            try:
+                # First, broadcast the raw decision update
+                await create_broadcast_handler("decision_update")(data)
+                
+                # Check if patterns were detected
+                patterns = data.get("patterns_detected") or data.get("patterns", [])
+                pattern_details = data.get("pattern_details", {})
+                
+                if patterns:
+                    # Broadcast distinct alert for each pattern type
+                    for pattern in patterns:
+                        details = pattern_details.get(pattern, {}) if isinstance(pattern_details, dict) else {}
+                        
+                        # Determine severity
+                        severity = details.get("severity", "info")
+                        if pattern == "BYZANTINE_BEHAVIOR":
+                            severity = "critical"
+                        elif pattern == "RESOURCE_HOARDING":
+                            severity = "warning"
+                        elif pattern == "ROUTING_LOOP":
+                            severity = "critical"
+                        
+                        pattern_alert = {
+                            "type": "pattern_alert",
+                            "data": {
+                                "agent_id": data.get("agent_id"),
+                                "patterns": [pattern],
+                                "timestamp": datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
+                                "severity": severity,
+                                "type": details.get("type", str(pattern).lower()),
+                                "details": details.get("details", f"Pattern {pattern} detected for agent {data.get('agent_id')}"),
+                                "recommended_action": details.get("recommended_action", "Review agent behavior and consider intervention"),
+                                "affected_agents": details.get("affected_agents", [data.get("agent_id")]),
+                                "risk_score": data.get("risk_score", 0.5)
+                            },
+                            "timestamp": datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+                        }
+                        await manager.broadcast(json.dumps(pattern_alert, default=str))
+            except Exception as e:
+                agent_logger.log_system_error(e, "api", "broadcast_decision_update_logic")
 
         event_bus.subscribe("decision_update", broadcast_decision_update)
 

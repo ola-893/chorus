@@ -78,8 +78,8 @@ class ComprehensiveDemo:
             voice_client.generate_alert(intro_text)
         
         # Simulate traffic
-        for _ in range(5):
-            time.sleep(1)
+        for _ in range(10): # Reduced from 15 to 10
+            time.sleep(3) # Increased from 2 to 3
             # Log healthy metrics to Datadog
             datadog_client.send_metric("chorus.system.risk_score", random.uniform(0.1, 0.2))
 
@@ -93,17 +93,17 @@ class ComprehensiveDemo:
         
         # While scenario runs, simulate the backend metrics
         # simulating Gemini analysis of the loop
-        for i in range(10):
-            risk = 0.3 + (i * 0.08) # Escalating risk
+        for i in range(15): # Reduced from 20 to 15
+            risk = 0.3 + (i * 0.05) # Escalating risk
             if risk > 1.0: risk = 0.99
             
             datadog_client.send_metric("chorus.system.risk_score", risk)
             
-            if i == 5:
+            if i == 8: # Threshold reached near middle
                 # Critical threshold crossed
                 logger.warning("Risk threshold exceeded! Triggering intervention.")
             
-            time.sleep(1)
+            time.sleep(3) # Increased from 2 to 3
 
     def _run_conclusion(self):
         """Wrap up the demo."""

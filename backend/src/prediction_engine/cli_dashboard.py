@@ -17,6 +17,7 @@ from .system_integration import conflict_predictor_system
 from .models.core import ConflictAnalysis, QuarantineResult, InterventionAction
 from .gemini_client import GeminiClient
 from ..config import settings
+from ..integrations.kafka_client import kafka_bus
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,7 @@ class DashboardMetrics:
     trust_scores: Dict[str, int]
     current_risk_score: Optional[float]
     gemini_api_status: bool
+    av_messages: List[Dict[str, Any]]
 
 
 class CLIDashboard:
@@ -56,12 +58,16 @@ class CLIDashboard:
         # Display state
         self.current_metrics: Optional[DashboardMetrics] = None
         self.display_width = 80  # Terminal width
-        self.display_height = 30  # Increased height for more content
+        self.display_height = 40  # Increased height for AgentVerse section
         
         # Conflict prediction components
         self.gemini_client: Optional[GeminiClient] = None
         self.conflict_history: List[ConflictAnalysis] = []
         self.last_prediction_time: Optional[datetime] = None
+        
+        # AgentVerse Visualization
+        self.av_messages: List[Dict[str, Any]] = []
+        self.av_consumer = None
         
         # Initialize Gemini client if API key is available
         try:
@@ -85,6 +91,15 @@ class CLIDashboard:
         self.is_running = True
         self.stop_event.clear()
         
+        # Initialize Kafka consumer for AgentVerse
+        if settings.kafka.enabled:
+            try:
+                self.av_consumer = kafka_bus.create_temporary_consumer(group_id="cli-dashboard-av")
+                if self.av_consumer:
+                    self.av_consumer.subscribe([settings.kafka.agent_messages_topic])
+            except Exception as e:
+                logger.error(f"Failed to init AgentVerse consumer: {e}")
+
         # Clear screen and hide cursor
         self._clear_screen()
         self._hide_cursor()
@@ -103,6 +118,13 @@ class CLIDashboard:
         self.is_running = False
         self.stop_event.set()
         
+        # Close consumer
+        if self.av_consumer:
+            try:
+                self.av_consumer.close()
+            except:
+                pass
+
         # Wait for display thread to finish
         if self.display_thread and self.display_thread.is_alive():
             self.display_thread.join(timeout=3.0)
@@ -135,6 +157,31 @@ class CLIDashboard:
     def _collect_metrics(self) -> DashboardMetrics:
         """Collect current system metrics for display."""
         try:
+            # Poll AgentVerse Messages
+            if self.av_consumer:
+                # Poll a few times to drain buffer
+                for _ in range(5):
+                    msg = self.av_consumer.poll(timeout=0.1)
+                    if msg is None:
+                        break
+                    if msg.error():
+                        continue
+                    
+                    try:
+                        import json
+                        val = json.loads(msg.value().decode('utf-8'))
+                        self.av_messages.append({
+                            "timestamp": datetime.now(),
+                            "sender": val.get("sender_id", "Unknown"),
+                            "content": val.get("content", {}),
+                            "type": val.get("message_type", "msg")
+                        })
+                        # Keep last 10
+                        if len(self.av_messages) > 10:
+                            self.av_messages = self.av_messages[-10:]
+                    except Exception:
+                        pass
+
             # Get system status
             system_status = conflict_predictor_system.get_system_status()
             
@@ -238,7 +285,8 @@ class CLIDashboard:
                 resource_utilization=resource_utilization,
                 trust_scores=trust_scores,
                 current_risk_score=current_risk_score,
-                gemini_api_status=gemini_api_status
+                gemini_api_status=gemini_api_status,
+                av_messages=self.av_messages
             )
             
         except Exception as e:
@@ -255,7 +303,8 @@ class CLIDashboard:
                 resource_utilization={},
                 trust_scores={},
                 current_risk_score=None,
-                gemini_api_status=False
+                gemini_api_status=False,
+                av_messages=[]
             )
     
     def _update_display(self) -> None:
@@ -302,12 +351,39 @@ class CLIDashboard:
         
         # Recent interventions section
         lines.extend(self._build_interventions_status())
+        lines.append("-" * self.display_width)
+
+        # AgentVerse section
+        lines.extend(self._build_agentverse_status())
         
         # Pad to fill screen and clear any remaining content
         while len(lines) < self.display_height:
             lines.append(" " * self.display_width)
         
         return "\n".join(lines[:self.display_height])
+
+    def _build_agentverse_status(self) -> List[str]:
+        """Build the AgentVerse message stream section."""
+        lines = ["AGENTVERSE TRAFFIC (Live):"]
+        
+        if not self.current_metrics.av_messages:
+            lines.append("  No recent messages (Waiting for traffic...)")
+            return lines
+            
+        for msg in self.current_metrics.av_messages:
+            ts = msg["timestamp"].strftime("%H:%M:%S")
+            sender = msg["sender"]
+            # Truncate sender if too long
+            if len(sender) > 15:
+                sender = sender[:12] + "..."
+            
+            content = str(msg["content"])
+            if len(content) > 40:
+                content = content[:37] + "..."
+            
+            lines.append(f"  {ts} [{sender}] -> {content}")
+            
+        return lines
     
     def _build_header(self) -> str:
         """Build the dashboard header."""

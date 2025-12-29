@@ -25,6 +25,7 @@ class KafkaEventBridge:
         self.running = False
         self.thread: Optional[threading.Thread] = None
         self.topics = [
+            settings.kafka.agent_messages_topic,
             settings.kafka.agent_decisions_topic,
             settings.kafka.system_alerts_topic,
             settings.kafka.causal_graph_updates_topic,
@@ -53,50 +54,55 @@ class KafkaEventBridge:
         """Main loop."""
         while self.running:
             try:
-                # Use polling from kafka_bus (which uses shared consumer, might be tricky if other components use it)
-                # Actually, KafkaMessageBus.consumer is shared.
-                # If StreamProcessor is using it, we have a problem if they are in same process.
-                # StreamProcessor calls kafka_bus.subscribe() and poll().
-                # If API runs in same process, they will fight over the consumer.
-                # BUT: API and StreamProcessor usually run in separate processes.
-                # If they run in same process (e.g. demo mode), we should be careful.
-                # Assuming separate processes for production.
-                # For demo/dev, if they share 'kafka_bus' instance, 'subscribe' overwrites subscription.
-                # We should use a separate consumer for the bridge.
-                
                 # Create a temporary consumer for the bridge
-                # Use a unique group ID to avoid conflicting with StreamProcessor if they consume same topics
                 group_id = f"chorus-api-bridge-{int(time.time())}"
+                logger.info(f"Bridge creating consumer with group ID: {group_id}")
                 consumer = kafka_bus.create_temporary_consumer(group_id=group_id)
                 if not consumer:
+                    logger.error("Bridge failed to create consumer")
                     time.sleep(5)
                     continue
                     
+                logger.info(f"Bridge subscribing to topics: {self.topics}")
                 consumer.subscribe(self.topics)
                 
                 while self.running:
                     msg = consumer.poll(1.0)
                     if msg is None:
+                        # Log periodically to show it's still polling
+                        if int(time.time()) % 10 == 0:
+                            logger.info(f"Bridge polling {self.topics}... (no messages)")
                         continue
                     if msg.error():
+                        logger.error(f"Kafka consumer error: {msg.error()}")
                         continue
                         
                     try:
+                        logger.info(f"Bridge received message on {msg.topic()}: {msg.value().decode('utf-8')[:100]}...")
                         val = json.loads(msg.value().decode('utf-8'))
                         topic = msg.topic()
                         
-                        # Map Kafka topics to EventBus events
-                        if topic == settings.kafka.agent_decisions_topic:
+                        # Dynamic dispatch based on payload type
+                        msg_type = val.get("type") or val.get("action_type")
+                        if msg_type:
+                            # Standardize on certain types for the frontend
+                            if msg_type == "resource_request":
+                                event_bus.publish("agent_activity", val)
+                            else:
+                                event_bus.publish(msg_type, val)
+                        
+                        # Fallback based on topic if no type found
+                        if topic == settings.kafka.agent_messages_topic:
+                            event_bus.publish("agent_activity", val)
+                        elif topic == settings.kafka.agent_decisions_topic:
+                            # Decision topic usually contains richer metadata or patterns
                             event_bus.publish("decision_update", val)
                         elif topic == settings.kafka.system_alerts_topic:
                             event_bus.publish("system_alert", val)
                         elif topic == settings.kafka.causal_graph_updates_topic:
+                            logger.info("Bridge received graph update")
                             event_bus.publish("graph_update", val)
                         elif topic == settings.kafka.analytics_metrics_topic:
-                            # Re-map to system_alert for frontend compatibility, or use new event type
-                            # Frontend expects type='system_alert' and data.type='stream_metrics'
-                            # The StreamProcessor sends {"type": "stream_metrics", ...} as value.
-                            # So we can publish as system_alert
                             event_bus.publish("system_alert", val)
                             
                     except Exception as e:

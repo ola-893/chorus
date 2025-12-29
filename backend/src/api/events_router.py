@@ -5,9 +5,47 @@ from fastapi import APIRouter, HTTPException, Query
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 
+import json
+import os
+
 from ..event_sourcing import event_log_manager
 
 router = APIRouter(prefix="/events", tags=["events"])
+
+@router.get("/demo-live")
+async def get_demo_live_events():
+    """
+    Get live demo events directly from the local log file.
+    Bypasses Kafka for immediate frontend updates.
+    """
+    try:
+        # Find project root (one level up from 'backend')
+        current_file_dir = os.path.dirname(os.path.abspath(__file__))
+        # current_file_dir is backend/src/api/
+        project_root = os.path.abspath(os.path.join(current_file_dir, "..", "..", ".."))
+        log_file = os.path.join(project_root, 'backend', 'logs', 'demo_events.jsonl')
+        
+        if not os.path.exists(log_file):
+            # Try current directory as fallback
+            log_file = os.path.join(os.getcwd(), 'logs', 'demo_events.jsonl')
+            if not os.path.exists(log_file):
+                return {"events": [], "count": 0}
+            
+        events = []
+        with open(log_file, 'r') as f:
+            # Read last 50 lines
+            lines = f.readlines()[-50:]
+            for line in lines:
+                try:
+                    events.append(json.loads(line))
+                except:
+                    continue
+        
+        # Reverse to get newest first
+        events.reverse()
+        return {"events": events, "count": len(events)}
+    except Exception as e:
+        return {"events": [], "error": str(e)}
 
 @router.get("/history")
 async def get_events_history(

@@ -344,6 +344,45 @@ class RedisTrustManager(TrustManager):
             )
             return {}
             
+    def get_all_agent_ids(self) -> List[str]:
+        """
+        Get all known agent IDs.
+        
+        Returns:
+            List of agent IDs
+        """
+        try:
+            # Scan for keys matching trust_score:*
+            # Note: We access the redis client through the score_manager
+            cursor = '0'
+            keys = []
+            prefix = self.score_manager.key_prefix
+            match_pattern = f"{prefix}:*"
+            
+            while cursor != 0:
+                cursor, batch = self.score_manager.redis_client._client.scan(cursor=cursor, match=match_pattern, count=100)
+                keys.extend(batch)
+                
+            # Extract agent IDs from keys
+            # Key format: trust_score:{agent_id}
+            agent_ids = []
+            for key in keys:
+                # Handle bytes if redis returns bytes
+                key_str = key.decode('utf-8') if isinstance(key, bytes) else key
+                # Remove prefix
+                if key_str.startswith(f"{prefix}:"):
+                    agent_ids.append(key_str.split(f"{prefix}:")[1])
+            
+            return agent_ids
+            
+        except Exception as e:
+            agent_logger.log_system_error(
+                e,
+                component="trust_manager",
+                operation="get_all_agent_ids"
+            )
+            return []
+            
     def get_agent_history(self, agent_id: str) -> List[Dict]:
         """
         Get the trust score adjustment history for an agent.

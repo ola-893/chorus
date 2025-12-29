@@ -16,6 +16,8 @@ try:
     from datadog_api_client.v1.model.metrics_payload import MetricsPayload
     from datadog_api_client.v1.model.series import Series
     from datadog_api_client.v1.model.point import Point
+    from datadog_api_client.v1.api.events_api import EventsApi
+    from datadog_api_client.v1.model.event_create_request import EventCreateRequest
 except ImportError:
     ApiClient = None
     Configuration = None
@@ -26,6 +28,8 @@ except ImportError:
     MetricsPayload = None
     Series = None
     Point = None
+    EventsApi = None
+    EventCreateRequest = None
 
 import socket
 import threading
@@ -85,6 +89,10 @@ class DatadogClient:
             self.api_client = ApiClient(configuration)
             self.logs_api = LogsApi(self.api_client)
             self.metrics_api = MetricsApi(self.api_client)
+            if EventsApi:
+                self.events_api = EventsApi(self.api_client)
+            else:
+                logger.warning("Datadog EventsApi not available")
             
             logger.info("Datadog client initialized successfully")
         except Exception as e:
@@ -146,6 +154,25 @@ class DatadogClient:
         if self.flush_thread:
             self.flush_thread.join(timeout=2.0)
         self._flush_buffers()
+
+    @datadog_circuit_breaker
+    def create_event(self, title: str, text: str, alert_type: str = "info", tags: Optional[List[str]] = None):
+        """Create a Datadog event."""
+        if not self.enabled or not self.events_api:
+            return
+
+        try:
+            body = EventCreateRequest(
+                title=title,
+                text=text,
+                alert_type=alert_type,
+                tags=tags or [f"env:{settings.environment.value}"],
+                source_type_name="chorus-backend"
+            )
+            self.events_api.create_event(body)
+            logger.info(f"Datadog event created: {title}")
+        except Exception as e:
+            logger.error(f"Failed to create Datadog event: {e}")
 
     def send_log(self, message: str, level: str = "INFO", context: Optional[Dict[str, Any]] = None, source: str = "chorus-backend"):
         """Queue a log for sending."""
@@ -290,6 +317,54 @@ class DatadogClient:
         except SystemRecoveryError:
             # Circuit breaker is open, gracefully degrade
             logger.debug(f"Datadog circuit breaker open, skipping conflict prediction log for {conflict_id}")
+
+    def track_llm_usage(self, model: str, prompt_tokens: int, completion_tokens: int, latency_ms: float, finish_reason: str):
+        """
+        Track LLM usage metrics (Tokens, Latency).
+        """
+        try:
+            tags = [f"model:{model}", f"finish_reason:{finish_reason}"]
+            
+            # Track Latency
+            self.send_metric(
+                "chorus.gemini.latency",
+                latency_ms,
+                tags=tags,
+                metric_type="gauge"
+            )
+
+            # Track Tokens
+            self.send_metric(
+                "chorus.gemini.tokens.prompt",
+                float(prompt_tokens),
+                tags=tags,
+                metric_type="count"
+            )
+            self.send_metric(
+                "chorus.gemini.tokens.completion",
+                float(completion_tokens),
+                tags=tags,
+                metric_type="count"
+            )
+            self.send_metric(
+                "chorus.gemini.tokens.total",
+                float(prompt_tokens + completion_tokens),
+                tags=tags,
+                metric_type="count"
+            )
+
+            # Track Request Count
+            self.send_metric(
+                "chorus.gemini.request",
+                1.0,
+                tags=tags,
+                metric_type="count"
+            )
+
+        except SystemRecoveryError:
+             logger.debug("Datadog circuit breaker open, skipping LLM usage metrics")
+        except Exception as e:
+            logger.error(f"Failed to track LLM usage: {e}")
 
 # Global instance
 datadog_client = DatadogClient()

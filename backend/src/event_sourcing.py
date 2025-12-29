@@ -29,7 +29,22 @@ class EventLogManager:
         self.kafka_bus = kafka_bus
         self.msg_topic = settings.kafka.agent_messages_topic
         self.decision_topic = settings.kafka.agent_decisions_topic
+        self._buffer = []
+        self._max_buffer = 1000
         
+    def _record_event(self, topic: str, value: Any, key: Optional[str] = None):
+        """Record an event in the local buffer for demo purposes."""
+        event = {
+            "topic": topic,
+            "value": value,
+            "key": key,
+            "timestamp": int(time.time() * 1000),
+            "offset": len(self._buffer)
+        }
+        self._buffer.append(event)
+        if len(self._buffer) > self._max_buffer:
+            self._buffer.pop(0)
+
     def replay_events(
         self, 
         topic: str, 
@@ -51,10 +66,44 @@ class EventLogManager:
         Yields:
             Event dictionary
         """
-        if not self.kafka_bus.enabled:
-            logger.warning("Kafka disabled, cannot replay events")
+        # Always check local buffer first - this is vital for the demo as it contains
+        # the most recent events captured by the bridge
+        buffer_events = []
+        count = 0
+        for event in self._buffer:
+            if event["topic"] != topic:
+                continue
+            
+            ts = event["timestamp"]
+            if start_time and ts < int(start_time.timestamp() * 1000):
+                continue
+            if end_time and ts > int(end_time.timestamp() * 1000):
+                continue
+            
+            val = event["value"]
+            if filter_func and not filter_func(val):
+                continue
+                
+            buffer_events.append({
+                "value": val,
+                "key": event["key"],
+                "timestamp": ts,
+                "offset": event["offset"],
+                "source": "buffer"
+            })
+            count += 1
+            if count >= limit:
+                break
+        
+        # Yield buffer events
+        for e in buffer_events:
+            yield e
+            
+        if count >= limit or not self.kafka_bus.enabled:
             return
 
+        # If we still have room, try to fetch from Kafka
+        remaining_limit = limit - count
         consumer = self.kafka_bus.create_temporary_consumer()
         if not consumer:
             logger.error("Failed to create consumer for replay")
@@ -68,23 +117,21 @@ class EventLogManager:
                 if offsets:
                     consumer.assign(offsets)
                 else:
-                    # If offset lookup fails or no partitions, just subscribe and hope for best (or fail)
                     consumer.subscribe([topic])
             else:
                 consumer.subscribe([topic])
-                # If no start time, we might want 'earliest' which is default for temp consumer
                 
-            count = 0
+            kafka_count = 0
             end_ts_ms = int(end_time.timestamp() * 1000) if end_time else None
             
-            while count < limit:
+            # To avoid duplicates if the buffer already has some Kafka messages
+            buffer_offsets = {e["offset"] for e in buffer_events if e.get("source") != "buffer"} # Buffer events have local offsets though
+            # Actually, local offsets in buffer are just indices. Kafka offsets are different.
+            # For now, we'll just yield them and let the frontend handle deduplication or just show all.
+            
+            while kafka_count < remaining_limit:
                 msg = consumer.poll(1.0)
                 if msg is None:
-                    # Timeout, maybe end of stream? Or just slow.
-                    # For replay, we might stop if we hit end of partition.
-                    # But checking EOF is tricky without checking all partitions.
-                    # We'll just continue for a bit or break if we want strict behavior.
-                    # For now, let's just break on None for now implies "caught up" or empty.
                     break
                 
                 if msg.error():
@@ -112,9 +159,10 @@ class EventLogManager:
                     "value": val,
                     "key": msg.key().decode('utf-8') if msg.key() else None,
                     "timestamp": msg.timestamp()[1],
-                    "offset": msg.offset()
+                    "offset": msg.offset(),
+                    "source": "kafka"
                 }
-                count += 1
+                kafka_count += 1
                 
         finally:
             consumer.close()

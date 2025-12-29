@@ -4,6 +4,7 @@ Gemini API client implementation for conflict prediction.
 import logging
 import hashlib
 import json
+import time
 from typing import List, Optional
 import google.genai as genai
 from google.genai.errors import APIError, ClientError, ServerError
@@ -101,19 +102,35 @@ class GeminiClient(GeminiClientInterface):
             test_prompt = "Test connection. Respond with 'OK'."
             
             # Handle different client types
-            if hasattr(self._client, 'generate_content'):
+            if hasattr(self._client, 'models'):
+                # Newer API - test by listing models
+                try:
+                    models = self._client.models.list()
+                    first_model = next(iter(models), None)
+                    if first_model:
+                        logger.info(f"Gemini API connection test successful (newer API), found model: {first_model.name}")
+                        return True
+                    else:
+                        logger.info("Gemini API connection test successful (newer API, empty model list)")
+                        return True
+                except Exception as e:
+                    logger.warning(f"Gemini models.list() failed: {e}, trying generation...")
+                    # Try generation as fallback
+                    try:
+                        response = self._client.models.generate_content(
+                            model="gemini-2.0-flash-exp",
+                            contents=test_prompt
+                        )
+                        if response and hasattr(response, 'text') and response.text:
+                            logger.info("Gemini API connection test successful (newer API via generation)")
+                            return True
+                    except Exception as gen_e:
+                        logger.warning(f"Gemini generation fallback failed: {gen_e}")
+            elif hasattr(self._client, 'generate_content'):
                 response = self._client.generate_content(test_prompt)
                 if response and hasattr(response, 'text') and response.text:
                     logger.info("Gemini API connection test successful")
                     return True
-            elif hasattr(self._client, 'models'):
-                # Newer API - just test if we can list models
-                try:
-                    models = list(self._client.models.list())
-                    logger.info("Gemini API connection test successful (newer API)")
-                    return True
-                except Exception:
-                    pass
             
             logger.warning("Gemini API connection test failed - no valid response")
             return False
@@ -168,11 +185,51 @@ class GeminiClient(GeminiClientInterface):
                 except Exception as e:
                     logger.warning(f"Cache lookup failed: {e}")
             
-            response = self._client.generate_content(prompt)
+            # Start timer
+            start_time = time.time()
+            
+            # Handle different client types
+            if hasattr(self._client, 'models'):
+                response = self._client.models.generate_content(
+                    model=self.model,
+                    contents=prompt
+                )
+            else:
+                response = self._client.generate_content(prompt)
+                
+            latency_ms = (time.time() - start_time) * 1000
             
             if not response or not response.text:
                 raise ValueError("Empty response from Gemini API")
             
+            # Extract and track LLM usage metadata
+            try:
+                prompt_tokens = 0
+                completion_tokens = 0
+                finish_reason = "unknown"
+                
+                # Check for usage metadata
+                if hasattr(response, 'usage_metadata'):
+                    prompt_tokens = getattr(response.usage_metadata, 'prompt_token_count', 0)
+                    completion_tokens = getattr(response.usage_metadata, 'candidates_token_count', 0)
+                
+                # Check for finish reason
+                if hasattr(response, 'candidates') and response.candidates:
+                     # Accessing the first candidate safely
+                     candidate = response.candidates[0]
+                     if hasattr(candidate, 'finish_reason'):
+                         finish_reason = str(candidate.finish_reason)
+
+                datadog_client.track_llm_usage(
+                    model=self.model,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    latency_ms=latency_ms,
+                    finish_reason=finish_reason
+                )
+            except Exception as e:
+                logger.warning(f"Failed to extract/send LLM metrics to Datadog: {e}")
+
             # Parse the response using ConflictAnalysisParser
             analysis = self.parser.parse_conflict_analysis(response.text)
             

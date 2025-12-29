@@ -20,7 +20,13 @@ from .error_handling import system_recovery_context
 from .event_bus import event_bus
 from .stream_processor import stream_processor
 from .event_bridge import kafka_event_bridge
+from .redis_bridge import redis_event_bridge
+from .prediction_engine.alert_delivery_engine import alert_delivery_engine
 from .integrations.kafka_client import kafka_bus
+from .integrations.agentverse.adapter_impl import AgentVerseNetworkAdapter
+from .integrations.base import NetworkConfig
+from .prediction_engine.redis_client import redis_client
+import os
 
 agent_logger = get_agent_logger(__name__)
 
@@ -67,6 +73,15 @@ class SystemLifecycleManager:
         self._shutdown_event = threading.Event()
         self._startup_complete = threading.Event()
         self._health_publisher_thread: Optional[threading.Thread] = None
+        
+        # Initialize AgentVerse Adapter
+        config = NetworkConfig(
+            network_id="agentverse",
+            api_key=os.getenv("AGENTVERSE_API_KEY"),
+            endpoint_url=os.getenv("AGENTVERSE_MONITORED_ADDRESS"),
+            polling_interval=float(os.getenv("AGENTVERSE_POLL_INTERVAL", "10.0"))
+        )
+        self.agentverse_adapter = AgentVerseNetworkAdapter(config)
         
         # Setup signal handlers
         self._setup_signal_handlers()
@@ -207,7 +222,7 @@ class SystemLifecycleManager:
         self.register_dependency_check(
             "gemini_api",
             check_gemini_api,
-            required=True,
+            required=False,  # Optional - system can run with degraded conflict prediction
             timeout=30.0
         )
         
@@ -338,6 +353,14 @@ class SystemLifecycleManager:
             except Exception as e:
                 agent_logger.log_system_error(e, "lifecycle_manager", "start_stream_processor")
 
+            # Start Alert Delivery Engine
+            try:
+                alert_delivery_engine.start()
+                agent_logger.log_agent_action("INFO", "Alert Delivery Engine started", action_type="alert_delivery_init")
+                self.register_shutdown_callback(alert_delivery_engine.stop)
+            except Exception as e:
+                agent_logger.log_system_error(e, "lifecycle_manager", "start_alert_delivery")
+
             # Start Kafka Event Bridge
             try:
                 kafka_event_bridge.start()
@@ -347,6 +370,39 @@ class SystemLifecycleManager:
                 self.register_shutdown_callback(kafka_event_bridge.stop)
             except Exception as e:
                 agent_logger.log_system_error(e, "lifecycle_manager", "start_event_bridge")
+
+            # Start Redis Event Bridge (Cross-process synchronization)
+            try:
+                redis_event_bridge.start()
+                agent_logger.log_agent_action("INFO", "Redis Event Bridge started", action_type="redis_bridge_init")
+                self.register_shutdown_callback(redis_event_bridge.stop)
+            except Exception as e:
+                agent_logger.log_system_error(e, "lifecycle_manager", "start_redis_bridge")
+
+            # Start AgentVerse Adapter
+            try:
+                def run_adapter_loop():
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    loop.run_until_complete(self.agentverse_adapter.start())
+                    loop.close()
+
+                adapter_thread = threading.Thread(target=run_adapter_loop, daemon=True)
+                adapter_thread.start()
+                
+                agent_logger.log_agent_action("INFO", "AgentVerse Adapter started", action_type="agentverse_adapter_init")
+                
+                # Register shutdown callback (async wrapper needed if stop is async)
+                # But BaseNetworkAdapter.stop is async.
+                # Shutdown callbacks in this system seem to be synchronous functions?
+                # Looking at 'register_shutdown_callback(callback: Callable[[], None])'.
+                # We need a sync wrapper for stop.
+                def stop_adapter_sync():
+                    asyncio.run(self.agentverse_adapter.stop())
+
+                self.register_shutdown_callback(stop_adapter_sync)
+            except Exception as e:
+                agent_logger.log_system_error(e, "lifecycle_manager", "start_agentverse_adapter")
 
             # Start performance monitoring
             try:

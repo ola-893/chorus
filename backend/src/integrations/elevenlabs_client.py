@@ -8,7 +8,8 @@ from typing import Optional, Union, Iterator
 from datetime import datetime
 
 try:
-    from elevenlabs import generate, save, set_api_key, Voice, VoiceSettings
+    from elevenlabs import Voice, VoiceSettings
+    from elevenlabs.client import ElevenLabs
     ELEVENLABS_AVAILABLE = True
 except ImportError:
     ELEVENLABS_AVAILABLE = False
@@ -38,6 +39,7 @@ class VoiceAlertClient:
         self.enabled = settings.elevenlabs.enabled and ELEVENLABS_AVAILABLE
         self.default_voice_id = settings.elevenlabs.voice_id
         self.redis = None
+        self.client = None
         
         try:
             from ..prediction_engine.redis_client import RedisClient
@@ -56,14 +58,14 @@ class VoiceAlertClient:
         if self.enabled:
             if self.api_key:
                 try:
-                    set_api_key(self.api_key)
-                    logger.info("ElevenLabs API key configured")
+                    self.client = ElevenLabs(api_key=self.api_key)
+                    logger.info("ElevenLabs client initialized")
                 except Exception as e:
                     agent_logger.log_system_error(e, "elevenlabs_client", "init")
-                    self.enabled = False
+                    # self.enabled = False # Don't disable, allow fallback
             else:
-                logger.warning("ElevenLabs API key not provided, voice generation disabled")
-                self.enabled = False
+                logger.warning("ElevenLabs API key not provided, entering Simulation Mode (fallback TTS)")
+                # self.enabled = False # Keep enabled for simulation
         elif not ELEVENLABS_AVAILABLE:
             logger.warning("elevenlabs library not installed, voice generation disabled")
 
@@ -84,13 +86,6 @@ class VoiceAlertClient:
                 if cached:
                     # Redis returns strings by default, but we store bytes? 
                     # Actually RedisClient wrapper returns string. 
-                    # We need raw bytes for audio.
-                    # The RedisClient wrapper might not support bytes get easily if it decodes.
-                    # Let's check RedisClient implementation or use direct client.
-                    # Assuming we might need to store as base64 or modify RedisClient.
-                    # For now, let's skip complex cache if RedisClient is text-only.
-                    # BUT: RedisClient.get returns whatever .decode() returns.
-                    # We should probably use a dedicated cache method or direct access.
                     pass
             except Exception:
                 pass
@@ -100,16 +95,17 @@ class VoiceAlertClient:
             try:
                 start_time = time.time()
                 
-                # Check cache (simulation for now, proper impl needs byte support in RedisClient)
-                # If we had bytes support:
-                # return cached_bytes
-                
-                audio = generate(
+                # Use the client instance for generation
+                # The generate method returns a generator of bytes, we need to collect it
+                audio_generator = self.client.generate(
                     text=text,
-                    voice=voice_obj,
-                    model=settings.elevenlabs.model_id,
-                    latency=3 # Optimize for latency (0-4 scale, 4 is max optimization)
+                    voice=voice_obj.voice_id, 
+                    model=settings.elevenlabs.model_id
                 )
+                
+                # Consume generator to get full audio bytes
+                audio_bytes = b"".join(chunk for chunk in audio_generator)
+                
                 duration = time.time() - start_time
                 
                 agent_logger.log_agent_action(
@@ -123,7 +119,7 @@ class VoiceAlertClient:
                         "cached": False
                     }
                 )
-                return audio
+                return audio_bytes
             except Exception as e:
                 raise ElevenLabsError(
                     f"Failed to generate voice alert: {str(e)}",
@@ -145,10 +141,11 @@ class VoiceAlertClient:
             # Try macOS 'say' command
             if sys.platform == "darwin":
                 try:
-                    with tempfile.NamedTemporaryFile(suffix=".aiff", delete=False) as tf:
+                    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tf:
                         temp_path = tf.name
                     
-                    subprocess.run(["say", "-o", temp_path, text], check=True, capture_output=True)
+                    # Generate WAV
+                    subprocess.run(["say", "-o", temp_path, "--data-format=LEI16@44100", text], check=True, capture_output=True)
                     
                     with open(temp_path, "rb") as f:
                         data = f.read()
@@ -212,6 +209,10 @@ class VoiceAlertClient:
             logger.info("Voice generation disabled, skipping alert generation")
             return None
 
+        # Simulation mode check
+        if not self.api_key:
+            return self._generate_fallback_audio(text)
+
         try:
             from elevenlabs import Voice, VoiceSettings
             
@@ -224,8 +225,6 @@ class VoiceAlertClient:
             )
             result = self._generate_audio(text, voice)
             
-            # If result is None (circuit breaker open or exhausted retries handled in wrapper?)
-            # actually _generate_audio raises exceptions which are caught below
             return result
             
         except Exception as e:
@@ -249,16 +248,16 @@ class VoiceAlertClient:
             
         try:
             # Create alerts directory if not exists
-            # We'll save relative to project root or in a temp dir
-            # For now let's use a dedicated 'alerts' folder in backend
             alerts_dir = os.path.join(os.getcwd(), "backend", "alerts")
             os.makedirs(alerts_dir, exist_ok=True)
             
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"alert_{timestamp}_{incident_id}.mp3"
+            filename = f"alert_{timestamp}_{incident_id}.wav" # Prefer .wav for fallback
             filepath = os.path.join(alerts_dir, filename)
             
-            save(audio_data, filepath)
+            # Using standard file write for bytes since 'save' from elevenlabs might not be imported or reliable with raw bytes from fallback
+            with open(filepath, "wb") as f:
+                f.write(audio_data)
             
             logger.info(f"Saved voice alert to {filepath}")
             return filepath
